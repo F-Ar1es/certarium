@@ -2,8 +2,10 @@ package pki
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/quick"
 )
 
 func TestValidateRequestAcceptsDNSIPv4AndIPv6(t *testing.T) {
@@ -16,6 +18,28 @@ func TestValidateRequestAcceptsDNSIPv4AndIPv6(t *testing.T) {
 	}
 	if err := ValidateRequest(req); err != nil {
 		t.Fatalf("valid request rejected: %v", err)
+	}
+}
+
+func TestValidateRequestRejectsGeneratedControlAndPathInjection(t *testing.T) {
+	property := func(prefix, suffix string, marker uint8) bool {
+		unsafe := []string{"\x00", "\r", "\n", "/", "\\", "="}
+		commonName := prefix + unsafe[int(marker)%len(unsafe)] + suffix
+		req := Request{Name: "safe", CommonName: commonName, ValidDays: 30}
+		return ValidateRequest(req) != nil
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 500}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidDNSNameGeneratedLabels(t *testing.T) {
+	property := func(left, right uint64) bool {
+		name := "n" + strings.ToLower(strconv.FormatUint(left, 36)) + ".n" + strings.ToLower(strconv.FormatUint(right, 36)) + ".test"
+		return validDNSName(name)
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 500}); err != nil {
+		t.Fatal(err)
 	}
 }
 

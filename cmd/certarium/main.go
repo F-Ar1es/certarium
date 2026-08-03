@@ -56,7 +56,9 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := home.Execute(w, nil); err != nil { log.Printf("render home: %v", err) }
+		if err := home.Execute(w, nil); err != nil {
+			log.Printf("render home: %v", err)
+		}
 	})
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
