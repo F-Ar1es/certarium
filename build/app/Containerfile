@@ -3,7 +3,9 @@ ARG VERSION=0.1.0-dev
 WORKDIR /src
 COPY certarium/go.mod ./
 COPY certarium/cmd ./cmd
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... \
+COPY certarium/internal ./internal
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
       -ldflags "-s -w -X main.version=${VERSION}" \
       -o /certarium ./cmd/certarium
