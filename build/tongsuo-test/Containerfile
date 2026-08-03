@@ -1,0 +1,24 @@
+FROM docker.io/library/debian:12-slim AS tongsuo
+
+ARG TONGSUO_COMMIT
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates git perl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN git clone https://github.com/Tongsuo-Project/Tongsuo.git \
+ && cd Tongsuo \
+ && git checkout --detach "${TONGSUO_COMMIT}" \
+ && test "$(git rev-parse HEAD)" = "${TONGSUO_COMMIT}" \
+ && ./config --prefix=/opt/tongsuo no-shared no-tests enable-ntls \
+ && make -j2 build_sw \
+ && make install_sw \
+ && mkdir -p /opt/tongsuo/licenses \
+ && cp LICENSE.txt /opt/tongsuo/licenses/Tongsuo-LICENSE.txt
+
+FROM docker.io/library/golang:1.22-bookworm
+COPY --from=tongsuo /opt/tongsuo /opt/tongsuo
+ENV CERTARIUM_OPENSSL=/opt/tongsuo/bin/openssl
+ENTRYPOINT ["/opt/tongsuo/bin/openssl"]
+CMD ["version", "-a"]

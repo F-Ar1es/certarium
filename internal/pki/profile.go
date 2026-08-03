@@ -30,6 +30,10 @@ func BuildExtensionConfig(req Request, kind CertificateKind) (string, error) {
 	}
 
 	var config strings.Builder
+	config.WriteString("[req]\n")
+	config.WriteString("distinguished_name=req_dn\n")
+	config.WriteString("prompt=no\n\n")
+	config.WriteString("[req_dn]\n\n")
 	config.WriteString("[server_cert]\n")
 	config.WriteString("basicConstraints=critical,CA:FALSE\n")
 	config.WriteString("subjectKeyIdentifier=hash\n")

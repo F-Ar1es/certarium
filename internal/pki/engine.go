@@ -69,11 +69,12 @@ func (e *Engine) InitializeAuthorities(ctx context.Context, organization string)
 	}
 	rsaKey, rsaCert := filepath.Join(rsaDir, "root-ca.key"), filepath.Join(rsaDir, "root-ca.crt")
 	sm2Key, sm2Cert := filepath.Join(sm2Dir, "root-ca.key"), filepath.Join(sm2Dir, "root-ca.crt")
-	baseExtensions := []string{"-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"}
-	rsaReq := append([]string{"req", "-new", "-x509", "-sha256", "-key", rsaKey, "-subj", caSubject(organization, "RSA"), "-days", "3650"}, baseExtensions...)
-	rsaReq = append(rsaReq, "-out", rsaCert)
-	sm2Req := append([]string{"req", "-new", "-x509", "-sm3", "-key", sm2Key, "-subj", caSubject(organization, "SM2"), "-days", "3650"}, baseExtensions...)
-	sm2Req = append(sm2Req, "-out", sm2Cert)
+	caConfig := filepath.Join(temp, "ca.cnf")
+	if err := os.WriteFile(caConfig, []byte(rootCAConfig), 0600); err != nil {
+		return fmt.Errorf("write root CA config: %w", err)
+	}
+	rsaReq := []string{"req", "-new", "-x509", "-sha256", "-config", caConfig, "-extensions", "v3_ca", "-key", rsaKey, "-subj", caSubject(organization, "RSA"), "-days", "3650", "-out", rsaCert}
+	sm2Req := []string{"req", "-new", "-x509", "-sm3", "-config", caConfig, "-extensions", "v3_ca", "-key", sm2Key, "-subj", caSubject(organization, "SM2"), "-days", "3650", "-out", sm2Cert}
 	commands := [][]string{
 		{"genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", rsaKey},
 		rsaReq,
@@ -85,7 +86,7 @@ func (e *Engine) InitializeAuthorities(ctx context.Context, organization string)
 	if err := e.runAll(ctx, commands); err != nil {
 		return err
 	}
-	if err := secureGeneratedFiles(rsaKey, rsaCert, sm2Key, sm2Cert); err != nil {
+	if err := secureGeneratedFiles(rsaKey, rsaCert, sm2Key, sm2Cert, caConfig); err != nil {
 		return err
 	}
 	if err := os.Rename(temp, final); err != nil {
@@ -123,7 +124,7 @@ func (e *Engine) IssueRSA(ctx context.Context, req Request) (Bundle, error) {
 	ca := e.caPaths("rsa")
 	commands := [][]string{
 		{"genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", key},
-		{"req", "-new", "-sha256", "-key", key, "-subj", "/CN=" + req.CommonName, "-out", csr},
+		{"req", "-new", "-sha256", "-config", extPath, "-key", key, "-subj", "/CN=" + req.CommonName, "-out", csr},
 		{"x509", "-req", "-sha256", "-in", csr, "-CA", ca.cert, "-CAkey", ca.key, "-set_serial", strconv.FormatUint(serial, 10), "-days", strconv.Itoa(req.ValidDays), "-extfile", extPath, "-extensions", "server_cert", "-out", cert},
 		{"verify", "-CAfile", ca.cert, cert},
 	}
@@ -243,7 +244,7 @@ func bundleFiles(dir, prefix string) (string, string, string) {
 func sm2CertificateCommands(req Request, key, csr, cert, extPath string, serial uint64, ca caFiles) [][]string {
 	return [][]string{
 		{"genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:SM2", "-out", key},
-		{"req", "-new", "-sm3", "-key", key, "-subj", "/CN=" + req.CommonName, "-out", csr},
+		{"req", "-new", "-sm3", "-config", extPath, "-key", key, "-subj", "/CN=" + req.CommonName, "-out", csr},
 		{"x509", "-req", "-sm3", "-in", csr, "-CA", ca.cert, "-CAkey", ca.key, "-set_serial", strconv.FormatUint(serial, 10), "-days", strconv.Itoa(req.ValidDays), "-extfile", extPath, "-extensions", "server_cert", "-out", cert},
 	}
 }
@@ -283,3 +284,16 @@ func syncDirectory(path string) error {
 func caSubject(organization, algorithm string) string {
 	return "/C=CN/O=" + organization + "/CN=" + organization + " " + algorithm + " Root CA"
 }
+
+const rootCAConfig = `[req]
+distinguished_name=req_dn
+prompt=no
+
+[req_dn]
+
+[v3_ca]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always
+`

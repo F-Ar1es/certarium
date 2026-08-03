@@ -208,3 +208,45 @@ func TestIssueRefusesExistingNameWithoutCryptoCalls(t *testing.T) {
 		t.Fatalf("crypto invoked before overwrite refusal: %s", fmt.Sprint(runner.calls))
 	}
 }
+
+func TestEveryReqCommandUsesExplicitConfig(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	engine := NewEngine(store, runner)
+	if err := engine.InitializeAuthorities(context.Background(), "Example Lab"); err != nil {
+		t.Fatal(err)
+	}
+	req := issuanceRequest()
+	if _, err := engine.IssueRSA(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Name = "gateway-tlcp"
+	if _, err := engine.IssueTLCP(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, args := range runner.calls {
+		if len(args) == 0 || args[0] != "req" {
+			continue
+		}
+		count++
+		if !containsArgument(args, "-config") {
+			t.Errorf("req command has no explicit -config: %v", args)
+		}
+	}
+	if count != 5 {
+		t.Fatalf("checked %d req commands, want 5", count)
+	}
+}
+
+func containsArgument(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
