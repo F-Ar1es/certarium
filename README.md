@@ -39,3 +39,29 @@ their own licenses as documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTIC
 
 The repository is being reshaped into the first runnable MVP. See
 `docs/PRODUCT.md` for scope and acceptance criteria.
+
+## Linux packages
+
+The packaging pipeline emits self-contained x86_64 RPM and DEB packages. Each
+package contains the Certarium service and the pinned Tongsuo 8.4.0 executable;
+it does not download dependencies or generate CA material during installation.
+
+- CentOS 7: install `certarium-0.1.0-1.el7.x86_64.rpm` with the system package
+  manager.
+- Debian: install `certarium_0.1.0-1_amd64.deb` with the system package manager.
+- The systemd service runs as the unprivileged `certarium` account and listens
+  on `127.0.0.1:8080` by default.
+- Durable PKI state is stored in `/var/lib/certarium`; ordinary package removal
+  preserves that state and `/etc/certarium/certarium.env`.
+
+On an Apple-silicon Mac with Apple Container installed, reproduce both packages
+and their clean-install tests with:
+
+```sh
+./scripts/build-packages-apple-container.sh
+./scripts/test-install-packages-apple-container.sh
+```
+
+Generated packages and hashes are written to `dist/`. The first build is slow
+because Tongsuo is compiled using the CentOS 7 x86_64 toolchain to prove the
+glibc 2.17 compatibility floor; subsequent builds reuse that layer.

@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 GO_BIN=${GO_BIN:-go}
 GOFMT_BIN=${GOFMT_BIN:-gofmt}
 OPENSSL_BIN=${CERTARIUM_OPENSSL:-}
+TONGSUO_LICENSE=${CERTARIUM_TONGSUO_LICENSE:-/opt/tongsuo/licenses/Tongsuo-LICENSE.txt}
 TMP_DIR=$(mktemp -d)
 SERVER_PID=
 
@@ -44,6 +45,8 @@ $GO_BIN tool cover -func="$TMP_DIR/coverage.out" | tee "$TMP_DIR/coverage.txt"
 echo "== manual mutation =="
 GO_BIN="$GO_BIN" ./tools/mutation-test.sh
 GO_BIN="$GO_BIN" ./tools/web-mutation-test.sh
+./tools/package-contract-test.sh
+./tools/package-mutation-test.sh
 
 echo "== build and real HTTP health request =="
 $GO_BIN build -trimpath -o "$TMP_DIR/certarium" ./cmd/certarium
@@ -68,7 +71,7 @@ $GO_BIN list -m all
 for file in LICENSE NOTICE THIRD_PARTY_NOTICES.md AI_ASSISTED_DEVELOPMENT.md; do
     test -s "$file"
 done
-test -s /opt/tongsuo/licenses/Tongsuo-LICENSE.txt
+test -s "$TONGSUO_LICENSE"
 if git grep -n -I -E -- '(BEGIN (RSA |EC |ENCRYPTED )?PRIVATE KEY|gh[opsu]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})' -- ':!tools/gauntlet.sh'; then
     echo "possible committed secret detected" >&2
     exit 1

@@ -1,0 +1,10 @@
+Package: certarium
+Version: 0.1.0-1
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: Certarium Project <noreply@example.invalid>
+Depends: libc6 (>= 2.17), systemd | systemd-sysv
+Description: local RSA and TLCP certificate laboratory
+ Certarium is a loopback-only private PKI workbench for issuing, revoking,
+ and testing RSA and TLCP certificates with CRL and OCSP support.
