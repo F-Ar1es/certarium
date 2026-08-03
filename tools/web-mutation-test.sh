@@ -64,5 +64,14 @@ run_mutant tlcp-pair-revocation internal/webapp/pki_service.go \
 run_mutant revoked-state-reporting internal/webapp/pki_service.go \
     'target.State = "revoked"' 'target.State = "valid"' \
     TestConcurrentRepeatedRevocationIsIdempotent
+run_mutant ocsp-body-limit internal/webapp/handler.go \
+    'MaxBytesReader(w, r.Body, 16' 'MaxBytesReader(w, r.Body, 32' \
+    TestStandardOCSPRouteEnforcesMIMEAndBodyLimit
+run_mutant ocsp-response-content-type internal/webapp/handler.go \
+    'w.Header().Set("Content-Type", "application/ocsp-response")' 'w.Header().Set("Content-Type", "application/octet-stream")' \
+    TestStandardOCSPRouteEnforcesMIMEAndBodyLimit
+run_mutant issuance-status-refresh internal/webapp/pki_service.go \
+    'if err := s.refreshIssuer(ctx, kind, ""); err != nil {' 'if err := error(nil); err != nil {' \
+    TestIssuanceRefreshesOnlineStatusIndex
 
 echo "All Web/API manual mutants were killed."

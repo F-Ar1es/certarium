@@ -182,6 +182,49 @@ func (e *Engine) PublishCRL(ctx context.Context, kind string, validCerts, revoke
 	return syncDirectory(crlDir)
 }
 
+func (e *Engine) RespondOCSP(ctx context.Context, kind string, request []byte) ([]byte, error) {
+	if kind != "rsa" && kind != "sm2" {
+		return nil, errors.New("OCSP kind must be rsa or sm2")
+	}
+	if len(request) == 0 || len(request) > 16*1024 {
+		return nil, errors.New("OCSP request size is invalid")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pkiDir := filepath.Join(e.store.root, "pki")
+	caDir := filepath.Join(pkiDir, "ca", kind)
+	index := filepath.Join(caDir, "index.txt")
+	if info, err := os.Lstat(index); err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("OCSP issuer database is unavailable")
+	}
+	temp, err := os.MkdirTemp(pkiDir, ".ocsp-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary OCSP directory: %w", err)
+	}
+	defer os.RemoveAll(temp)
+	if err := os.Chmod(temp, 0700); err != nil {
+		return nil, fmt.Errorf("secure temporary OCSP directory: %w", err)
+	}
+	requestPath := filepath.Join(temp, "request.der")
+	responsePath := filepath.Join(temp, "response.der")
+	if err := os.WriteFile(requestPath, request, 0600); err != nil {
+		return nil, fmt.Errorf("write OCSP request: %w", err)
+	}
+	caCert := filepath.Join(caDir, "root-ca.crt")
+	caKey := filepath.Join(caDir, "root-ca.key")
+	if _, err := e.runner.Run(ctx,
+		"ocsp", "-index", index, "-rsigner", caCert, "-rkey", caKey,
+		"-CA", caCert, "-reqin", requestPath, "-respout", responsePath, "-ndays", "1",
+	); err != nil {
+		return nil, fmt.Errorf("generate OCSP response: %w", err)
+	}
+	response, err := os.ReadFile(responsePath)
+	if err != nil {
+		return nil, fmt.Errorf("read OCSP response: %w", err)
+	}
+	return response, nil
+}
+
 func (e *Engine) IssueRSA(ctx context.Context, req Request) (Bundle, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

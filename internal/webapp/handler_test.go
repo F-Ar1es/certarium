@@ -49,6 +49,10 @@ func (f *fakeService) CRL(context.Context, string) (Download, error) {
 	return Download{Name: "rsa.crl.pem", ContentType: "application/pkix-crl", Data: []byte("CRL")}, nil
 }
 
+func (f *fakeService) OCSP(_ context.Context, kind string, request []byte) ([]byte, error) {
+	return append([]byte(kind+":"), request...), nil
+}
+
 func TestStatusDoesNotExposeDataDirectory(t *testing.T) {
 	h := New(Options{Service: &fakeService{initialized: true}, Version: "test"})
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
@@ -183,5 +187,41 @@ func TestRevokeAndCRLRoutes(t *testing.T) {
 	h.ServeHTTP(w, request)
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/pkix-crl" || w.Body.String() != "CRL" {
 		t.Fatalf("CRL response: status=%d type=%q body=%q", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+}
+
+func TestStandardOCSPRouteEnforcesMIMEAndBodyLimit(t *testing.T) {
+	h := New(Options{Service: &fakeService{}})
+	request := httptest.NewRequest(http.MethodPost, "/ocsp/rsa", bytes.NewReader([]byte("DER")))
+	request.Header.Set("Content-Type", "application/ocsp-request")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, request)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/ocsp-response" || w.Body.String() != "rsa:DER" {
+		t.Fatalf("OCSP response: status=%d type=%q body=%q", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("OCSP response is cacheable")
+	}
+
+	for _, tc := range []struct {
+		name string
+		kind string
+		body []byte
+		mime string
+	}{
+		{"wrong MIME", "rsa", []byte("DER"), "application/json"},
+		{"empty", "rsa", nil, "application/ocsp-request"},
+		{"oversized", "rsa", bytes.Repeat([]byte("x"), 16*1024+1), "application/ocsp-request"},
+		{"bad issuer", "other", []byte("DER"), "application/ocsp-request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/ocsp/"+tc.kind, bytes.NewReader(tc.body))
+			r.Header.Set("Content-Type", tc.mime)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusBadRequest && w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

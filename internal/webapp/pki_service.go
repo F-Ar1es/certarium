@@ -75,6 +75,8 @@ func (s *PKIService) Initialize(ctx context.Context, organization string) error 
 }
 
 func (s *PKIService) Issue(ctx context.Context, kind string, input IssueRequest) (CertificateRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.engine == nil {
 		return CertificateRecord{}, errors.New("PKI engine is unavailable")
 	}
@@ -110,6 +112,9 @@ func (s *PKIService) Issue(ctx context.Context, kind string, input IssueRequest)
 	if err := writeManifest(filepath.Join(s.dataDir, "pki", "issued", input.Name, manifestName), manifest); err != nil {
 		return CertificateRecord{}, err
 	}
+	if err := s.refreshIssuer(ctx, kind, ""); err != nil {
+		return CertificateRecord{}, err
+	}
 	return record, nil
 }
 
@@ -128,15 +133,30 @@ func (s *PKIService) Revoke(ctx context.Context, id string) (CertificateRecord, 
 	if target.State == "revoked" {
 		return target.CertificateRecord, nil
 	}
-	caKind := "rsa"
-	if target.Kind == "tlcp" {
-		caKind = "sm2"
-	} else if target.Kind != "rsa" {
+	if target.Kind != "rsa" && target.Kind != "tlcp" {
 		return CertificateRecord{}, ErrInvalid
 	}
+	if err := s.refreshIssuer(ctx, target.Kind, id); err != nil {
+		return CertificateRecord{}, err
+	}
+	target.State = "revoked"
+	if err := writeManifest(targetPath, target); err != nil {
+		return CertificateRecord{}, err
+	}
+	return target.CertificateRecord, nil
+}
+
+func (s *PKIService) refreshIssuer(ctx context.Context, bundleKind, revokeID string) error {
+	caKind := "rsa"
+	if bundleKind == "tlcp" {
+		caKind = "sm2"
+	} else if bundleKind != "rsa" {
+		return ErrInvalid
+	}
+	issued := filepath.Join(s.dataDir, "pki", "issued")
 	entries, err := os.ReadDir(issued)
 	if err != nil {
-		return CertificateRecord{}, fmt.Errorf("list revocation inventory: %w", err)
+		return fmt.Errorf("list certificate status inventory: %w", err)
 	}
 	var validCerts, revokedCerts []string
 	for _, entry := range entries {
@@ -144,11 +164,11 @@ func (s *PKIService) Revoke(ctx context.Context, id string) (CertificateRecord, 
 			continue
 		}
 		manifest, readErr := readManifest(filepath.Join(issued, entry.Name(), manifestName))
-		if readErr != nil || manifest.Kind != target.Kind {
+		if readErr != nil || manifest.Kind != bundleKind {
 			continue
 		}
 		state := manifest.State
-		if manifest.ID == id {
+		if manifest.ID == revokeID {
 			state = "revoked"
 		}
 		for _, name := range manifest.Files {
@@ -164,13 +184,9 @@ func (s *PKIService) Revoke(ctx context.Context, id string) (CertificateRecord, 
 		}
 	}
 	if err := s.engine.PublishCRL(ctx, caKind, validCerts, revokedCerts); err != nil {
-		return CertificateRecord{}, mapPKIError(err)
+		return mapPKIError(err)
 	}
-	target.State = "revoked"
-	if err := writeManifest(targetPath, target); err != nil {
-		return CertificateRecord{}, err
-	}
-	return target.CertificateRecord, nil
+	return nil
 }
 
 func (s *PKIService) CRL(_ context.Context, kind string) (Download, error) {
@@ -188,6 +204,17 @@ func (s *PKIService) CRL(_ context.Context, kind string) (Download, error) {
 		return Download{}, ErrFileNotAllowed
 	}
 	return Download{Name: name, ContentType: "application/pkix-crl", Data: data}, nil
+}
+
+func (s *PKIService) OCSP(ctx context.Context, kind string, request []byte) ([]byte, error) {
+	if s.engine == nil || (kind != "rsa" && kind != "sm2") {
+		return nil, ErrInvalid
+	}
+	response, err := s.engine.RespondOCSP(ctx, kind, request)
+	if err != nil {
+		return nil, mapPKIError(err)
+	}
+	return response, nil
 }
 
 func (s *PKIService) List(context.Context) ([]CertificateRecord, error) {

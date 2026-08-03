@@ -48,14 +48,70 @@ func TestRealOpenSSLGeneratesVerifiableRSAAndTLCPBundles(t *testing.T) {
 		t.Fatal("real TLCP issuance reused private key bytes")
 	}
 
+	rsaCA := filepath.Join(store.root, "pki", "ca", "rsa", "root-ca.crt")
+	sm2CA := filepath.Join(store.root, "pki", "ca", "sm2", "root-ca.crt")
+	if err := engine.PublishCRL(ctx, "rsa", []string{rsa.CertificatePath}, nil); err != nil {
+		t.Fatalf("publish valid RSA status: %v", err)
+	}
+	if err := engine.PublishCRL(ctx, "sm2", []string{tlcp.Signing.CertificatePath, tlcp.Encryption.CertificatePath}, nil); err != nil {
+		t.Fatalf("publish valid SM2 status: %v", err)
+	}
+	rsaRequest := makeOCSPRequest(t, executable, rsaCA, rsa.CertificatePath, "")
+	assertOCSPStatus(t, engine, executable, "rsa", rsaCA, rsa.CertificatePath, rsaRequest, "good")
+	sm2Request := makeOCSPRequest(t, executable, sm2CA, tlcp.Signing.CertificatePath, "")
+	assertOCSPStatus(t, engine, executable, "sm2", sm2CA, tlcp.Signing.CertificatePath, sm2Request, "good")
+	unknownRequest := makeOCSPRequest(t, executable, rsaCA, "", "2147483647")
+	assertOCSPStatus(t, engine, executable, "rsa", rsaCA, "", unknownRequest, "unknown")
+
 	if err := engine.PublishCRL(ctx, "rsa", nil, []string{rsa.CertificatePath}); err != nil {
 		t.Fatalf("publish real RSA CRL: %v", err)
 	}
-	assertCRLText(t, executable, filepath.Join(store.root, "pki", "crl", "rsa.crl.pem"), filepath.Join(store.root, "pki", "ca", "rsa", "root-ca.crt"))
+	assertCRLText(t, executable, filepath.Join(store.root, "pki", "crl", "rsa.crl.pem"), rsaCA)
+	assertOCSPStatus(t, engine, executable, "rsa", rsaCA, rsa.CertificatePath, rsaRequest, "revoked")
 	if err := engine.PublishCRL(ctx, "sm2", nil, []string{tlcp.Signing.CertificatePath, tlcp.Encryption.CertificatePath}); err != nil {
 		t.Fatalf("publish real SM2 CRL: %v", err)
 	}
-	assertCRLText(t, executable, filepath.Join(store.root, "pki", "crl", "sm2.crl.pem"), filepath.Join(store.root, "pki", "ca", "sm2", "root-ca.crt"))
+	assertCRLText(t, executable, filepath.Join(store.root, "pki", "crl", "sm2.crl.pem"), sm2CA)
+	assertOCSPStatus(t, engine, executable, "sm2", sm2CA, tlcp.Signing.CertificatePath, sm2Request, "revoked")
+}
+
+func makeOCSPRequest(t *testing.T, executable, issuer, cert, serial string) []byte {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "request.der")
+	args := []string{"ocsp", "-issuer", issuer}
+	if cert != "" {
+		args = append(args, "-cert", cert)
+	} else {
+		args = append(args, "-serial", serial)
+	}
+	args = append(args, "-reqout", path, "-no_nonce")
+	if output, err := exec.Command(executable, args...).CombinedOutput(); err != nil {
+		t.Fatalf("create OCSP request: %v: %s", err, output)
+	}
+	return mustRead(t, path)
+}
+
+func assertOCSPStatus(t *testing.T, engine *Engine, executable, kind, issuer, cert string, request []byte, want string) {
+	t.Helper()
+	response, err := engine.RespondOCSP(context.Background(), kind, request)
+	if err != nil {
+		t.Fatalf("generate %s OCSP response: %v", kind, err)
+	}
+	responsePath := filepath.Join(t.TempDir(), "response.der")
+	if err := os.WriteFile(responsePath, response, 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"ocsp", "-respin", responsePath, "-issuer", issuer, "-CAfile", issuer, "-text"}
+	if cert != "" {
+		args = append(args, "-cert", cert)
+	}
+	output, err := exec.Command(executable, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("verify OCSP response: %v: %s", err, output)
+	}
+	if !strings.Contains(string(output), want) {
+		t.Fatalf("OCSP output missing %q: %s", want, output)
+	}
 }
 
 func assertCertificateText(t *testing.T, executable, path string, wants ...string) {

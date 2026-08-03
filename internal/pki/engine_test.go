@@ -22,7 +22,7 @@ func (r *fakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
 		return nil, errors.New("injected crypto failure")
 	}
 	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-out" {
+		if args[i] == "-out" || args[i] == "-respout" {
 			if err := os.WriteFile(args[i+1], []byte("generated:"+args[i+1]+"\n"), 0644); err != nil {
 				return nil, err
 			}
@@ -270,6 +270,55 @@ func TestPublishCRLUsesPrivateDatabaseAndDoesNotReplaceOnFailure(t *testing.T) {
 				t.Fatalf("unexpected CRL command sequence: %v", runner.calls)
 			}
 		})
+	}
+}
+
+func TestRespondOCSPUsesAllowlistedIssuerAndCleansTemporaryFiles(t *testing.T) {
+	store := initializedStore(t)
+	caDir := filepath.Join(store.root, "pki", "ca", "rsa")
+	if err := os.WriteFile(filepath.Join(caDir, "index.txt"), []byte(""), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	response, err := NewEngine(store, runner).RespondOCSP(context.Background(), "rsa", []byte("DER REQUEST"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(response), "generated:") {
+		t.Fatalf("response = %q", response)
+	}
+	if len(runner.calls) != 1 || runner.calls[0][0] != "ocsp" || !containsArgument(runner.calls[0], "-reqin") || !containsArgument(runner.calls[0], "-respout") {
+		t.Fatalf("unexpected OCSP command: %v", runner.calls)
+	}
+	matches, err := filepath.Glob(filepath.Join(store.root, "pki", ".ocsp-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("OCSP temporary files remain: %v, %v", matches, err)
+	}
+
+	before := len(runner.calls)
+	if _, err := NewEngine(store, runner).RespondOCSP(context.Background(), "../rsa", []byte("DER")); err == nil {
+		t.Fatal("unsafe OCSP issuer accepted")
+	}
+	if len(runner.calls) != before {
+		t.Fatal("crypto invoked for unsafe OCSP issuer")
+	}
+
+	sm2Dir := filepath.Join(store.root, "pki", "ca", "sm2")
+	if err := os.WriteFile(filepath.Join(sm2Dir, "index.txt"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewEngine(store, runner).RespondOCSP(context.Background(), "sm2", []byte("DER")); err != nil {
+		t.Fatal(err)
+	}
+	call := runner.calls[len(runner.calls)-1]
+	foundSM2Index := false
+	for _, arg := range call {
+		if strings.HasSuffix(arg, filepath.Join("sm2", "index.txt")) {
+			foundSM2Index = true
+		}
+	}
+	if !foundSM2Index {
+		t.Fatalf("SM2 OCSP used wrong issuer index: %v", call)
 	}
 }
 

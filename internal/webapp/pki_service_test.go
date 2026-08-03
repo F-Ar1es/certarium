@@ -217,3 +217,39 @@ func TestConcurrentRepeatedRevocationIsIdempotent(t *testing.T) {
 		t.Fatalf("crypto calls = %d, want one four-command CRL publication", runner.calls)
 	}
 }
+
+func TestIssuanceRefreshesOnlineStatusIndex(t *testing.T) {
+	root := t.TempDir()
+	store := pki.NewStore(root)
+	if err := store.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	caDir := filepath.Join(root, "pki", "ca", "rsa")
+	if err := os.MkdirAll(caDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"root-ca.crt": "CA", "root-ca.key": "KEY", "crlnumber": "1000\n"} {
+		if err := os.WriteFile(filepath.Join(caDir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &crlFakeRunner{}
+	service := NewPKIService(root, store, pki.NewEngine(store, runner))
+	_, err := service.Issue(context.Background(), "rsa", IssueRequest{
+		Name: "online", CommonName: "online.test", DNSNames: []string{"online.test"}, ValidDays: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := false
+	for _, args := range runner.args {
+		for _, arg := range args {
+			if arg == "-valid" {
+				registered = true
+			}
+		}
+	}
+	if !registered {
+		t.Fatal("issued certificate was not registered for online status")
+	}
+}

@@ -93,4 +93,11 @@ run_mutant \
     'return nil' \
     TestPublishCRLUsesPrivateDatabaseAndDoesNotReplaceOnFailure
 
+run_mutant \
+    wrong-ocsp-issuer-index \
+    internal/pki/engine.go \
+    'index := filepath.Join(caDir, "index.txt")' \
+    'index := filepath.Join(pkiDir, "ca", "rsa", "index.txt")' \
+    TestRespondOCSPUsesAllowlistedIssuerAndCleansTemporaryFiles
+
 echo "All manual mutants were killed."

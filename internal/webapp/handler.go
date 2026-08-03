@@ -58,6 +58,7 @@ type Service interface {
 	Download(context.Context, string, string) (Download, error)
 	Revoke(context.Context, string) (CertificateRecord, error)
 	CRL(context.Context, string) (Download, error)
+	OCSP(context.Context, string, []byte) ([]byte, error)
 }
 
 type Options struct {
@@ -83,6 +84,7 @@ func New(options Options) http.Handler {
 	h.mux.HandleFunc("GET /api/v1/certificates/{id}/files/{file}", h.download)
 	h.mux.HandleFunc("POST /api/v1/certificates/{id}/revoke", h.revoke)
 	h.mux.HandleFunc("GET /api/v1/crl/{kind}", h.crl)
+	h.mux.HandleFunc("POST /ocsp/{kind}", h.ocsp)
 	return securityHeaders(h)
 }
 
@@ -210,6 +212,38 @@ func (h *handler) crl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveDownload(w, download)
+}
+
+func (h *handler) ocsp(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if kind != "rsa" && kind != "sm2" {
+		writeAPIError(w, http.StatusNotFound, "not_found", "资源不存在")
+		return
+	}
+	media := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	if media != "application/ocsp-request" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_ocsp_request", "OCSP 请求格式无效")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r, origin) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_ocsp_request", "OCSP 请求来源无效")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	request, err := io.ReadAll(r.Body)
+	if err != nil || len(request) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_ocsp_request", "OCSP 请求格式无效")
+		return
+	}
+	response, err := h.service.OCSP(r.Context(), kind, request)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/ocsp-response")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(response)
 }
 
 func serveDownload(w http.ResponseWriter, download Download) {

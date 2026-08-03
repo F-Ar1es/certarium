@@ -51,11 +51,32 @@ curl --fail --silent http://127.0.0.1:18081/api/v1/certificates >"$TMP_DIR/list.
 grep -F '"id":"rsa-smoke"' "$TMP_DIR/list.json"
 grep -F '"id":"tlcp-smoke"' "$TMP_DIR/list.json"
 
+check_ocsp() {
+    expected=$1
+    kind=$2
+    cert=$3
+    issuer="$TMP_DIR/data/pki/ca/$kind/root-ca.crt"
+    request="$TMP_DIR/$kind-request.der"
+    response="$TMP_DIR/$kind-response.der"
+    "$OPENSSL_BIN" ocsp -issuer "$issuer" -cert "$cert" -reqout "$request" -no_nonce
+    curl --fail --silent --show-error -H 'Content-Type: application/ocsp-request' \
+        --data-binary "@$request" "http://127.0.0.1:18081/ocsp/$kind" >"$response"
+    "$OPENSSL_BIN" ocsp -respin "$response" -issuer "$issuer" -cert "$cert" \
+        -CAfile "$issuer" >"$TMP_DIR/$kind-ocsp.txt" 2>&1
+    grep -F "$expected" "$TMP_DIR/$kind-ocsp.txt"
+}
+
+check_ocsp good rsa "$TMP_DIR/data/pki/issued/rsa-smoke/server-rsa.crt"
+check_ocsp good sm2 "$TMP_DIR/data/pki/issued/tlcp-smoke/server-sign.crt"
+
 for id in rsa-smoke tlcp-smoke; do
     curl --fail --silent --show-error -H 'Content-Type: application/json' -d '{}' \
         "http://127.0.0.1:18081/api/v1/certificates/$id/revoke" >"$TMP_DIR/$id-revoke.json"
     grep -F '"state":"revoked"' "$TMP_DIR/$id-revoke.json"
 done
+
+check_ocsp revoked rsa "$TMP_DIR/data/pki/issued/rsa-smoke/server-rsa.crt"
+check_ocsp revoked sm2 "$TMP_DIR/data/pki/issued/tlcp-smoke/server-sign.crt"
 
 for kind in rsa sm2; do
     curl --fail --silent --show-error \
