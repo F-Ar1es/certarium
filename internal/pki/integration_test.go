@@ -20,10 +20,19 @@ func TestRealOpenSSLGeneratesVerifiableRSAAndTLCPBundles(t *testing.T) {
 	if err := store.Initialize(); err != nil {
 		t.Fatal(err)
 	}
-	engine := NewEngine(store, CommandRunner{Executable: executable, Timeout: 20 * time.Second})
+	engine := NewEngineWithPassphrase(store, CommandRunner{Executable: executable, Timeout: 20 * time.Second}, "integration-secret")
 	ctx := context.Background()
 	if err := engine.InitializeAuthorities(ctx, "Certarium Test Lab"); err != nil {
 		t.Fatalf("initialize real authorities: %v", err)
+	}
+	rsaKey := filepath.Join(store.root, "pki", "ca", "rsa", "root-ca.key")
+	if output, err := exec.Command(executable, "pkey", "-in", rsaKey, "-noout").CombinedOutput(); err == nil {
+		t.Fatalf("encrypted CA key opened without passphrase: %s", output)
+	}
+	decrypt := exec.Command(executable, "pkey", "-in", rsaKey, "-passin", "env:CERTARIUM_CA_PASSPHRASE", "-noout")
+	decrypt.Env = append(os.Environ(), "CERTARIUM_CA_PASSPHRASE=integration-secret")
+	if output, err := decrypt.CombinedOutput(); err != nil {
+		t.Fatalf("encrypted CA key rejected correct passphrase: %v: %s", err, output)
 	}
 
 	rsaReq := issuanceRequest()

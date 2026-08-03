@@ -1,6 +1,8 @@
 package webapp
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -10,6 +12,76 @@ import (
 
 	"certarium/internal/pki"
 )
+
+func TestPKIServiceBundleAndRootCAExposeOnlyDeclaredPublicFiles(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "pki", "issued", "gateway")
+	ca := filepath.Join(root, "pki", "ca", "rsa")
+	if err := os.MkdirAll(bundle, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ca, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, manifestName), []byte(`{"id":"gateway","kind":"rsa","files":["server.crt","server.key"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"server.crt": "CERT", "server.key": "KEY", "hidden.key": "HIDDEN"} {
+		if err := os.WriteFile(filepath.Join(bundle, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(ca, "root-ca.crt"), []byte("ROOT"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	service := NewPKIService(root, nil, nil)
+	download, err := service.Bundle(context.Background(), "gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !download.Private || download.ContentType != "application/zip" {
+		t.Fatalf("bundle metadata = %#v", download)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(download.Data), int64(len(download.Data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, file := range reader.File {
+		names = append(names, file.Name)
+	}
+	if len(names) != 2 || names[0] != "server.crt" || names[1] != "server.key" {
+		t.Fatalf("bundle names = %v", names)
+	}
+	rootDownload, err := service.RootCA(context.Background(), "rsa")
+	if err != nil || string(rootDownload.Data) != "ROOT" || rootDownload.Private {
+		t.Fatalf("root download=%#v err=%v", rootDownload, err)
+	}
+	if _, err := service.RootCA(context.Background(), "../rsa"); !errors.Is(err, ErrFileNotAllowed) {
+		t.Fatalf("unsafe root kind error=%v", err)
+	}
+}
+
+func TestPKIServiceBundleRejectsAllowlistedSymlink(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "pki", "issued", "gateway")
+	if err := os.MkdirAll(bundle, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, manifestName), []byte(`{"id":"gateway","files":["server.key"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(root, "secret")
+	if err := os.WriteFile(secret, []byte("SECRET"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(bundle, "server.key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPKIService(root, nil, nil).Bundle(context.Background(), "gateway"); !errors.Is(err, ErrFileNotAllowed) {
+		t.Fatalf("symlink bundle error=%v", err)
+	}
+}
 
 type crlFakeRunner struct {
 	mu    sync.Mutex

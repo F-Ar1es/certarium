@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/pki-core]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gauntlet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: .build/ci-tongsuo
+          key: tongsuo-${{ runner.os }}-a8ae0925d26de3b449f7a21767910cd41291bcd8
+      - name: Build pinned Tongsuo
+        run: ./tools/ci-install-tongsuo.sh
+      - name: Run evidence gauntlet
+        env:
+          CERTARIUM_OPENSSL: ${{ github.workspace }}/.build/ci-tongsuo/bin/openssl
+          CERTARIUM_TONGSUO_LICENSE: ${{ github.workspace }}/.build/ci-tongsuo/licenses/Tongsuo-LICENSE.txt
+        run: ./tools/gauntlet.sh

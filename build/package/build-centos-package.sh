@@ -9,6 +9,7 @@ rm -rf "$STAGE" "$TOP"
 mkdir -p "$STAGE" "$TOP/BUILD" "$TOP/BUILDROOT" "$TOP/RPMS" "$TOP/SOURCES" "$TOP/SPECS" "$TOP/SRPMS" "$OUT"
 cp -a /src/packaging/rootfs/. "$STAGE/"
 install -D -m 0755 /build/certarium "$STAGE/usr/bin/certarium"
+install -D -m 0755 /build/certarium-backup "$STAGE/usr/bin/certarium-backup"
 install -D -m 0755 /opt/tongsuo/bin/openssl "$STAGE/opt/certarium/bin/openssl"
 install -d -m 0755 "$STAGE/opt/certarium/lib/ossl-modules"
 for modules in /opt/tongsuo/lib/ossl-modules /opt/tongsuo/lib64/ossl-modules; do
@@ -29,6 +30,7 @@ install -m 0644 /build/Tongsuo/LICENSE.txt "$STAGE/usr/share/doc/certarium/Tongs
     echo "glibc=$(getconf GNU_LIBC_VERSION)"
     echo "tongsuo_commit=$TONGSUO_COMMIT"
     echo "go_binary_static=$(file /build/certarium)"
+    echo "backup_binary_static=$(file /build/certarium-backup)"
     echo "tongsuo_version=$(/opt/tongsuo/bin/openssl version)"
 } >"$STAGE/usr/share/doc/certarium/BUILD-MANIFEST.txt"
 

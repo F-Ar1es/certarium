@@ -7,8 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"certarium/internal/audit"
 )
 
 type fakeService struct {
@@ -16,6 +20,44 @@ type fakeService struct {
 	initErr     error
 	issuedKind  string
 	issued      IssueRequest
+	issueCalls  int
+}
+
+func TestMutationAndDownloadAttemptsAreAuditedWithoutBodies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	h := New(Options{Service: &fakeService{}, Auditor: audit.New(path)})
+	requests := []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/certificates/rsa", bytes.NewBufferString(`{"name":"audit-item","common_name":"secret-canary.test","valid_days":30,"confirm_server_key_generation":true}`)),
+		httptest.NewRequest(http.MethodGet, "/api/v1/certificates/audit-item/files/server-rsa.key", nil),
+	}
+	requests[0].Header.Set("Content-Type", "application/json")
+	for _, request := range requests {
+		request.RemoteAddr = "127.0.0.1:43210"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, request)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
+	if len(lines) != 2 {
+		t.Fatalf("audit lines = %d: %s", len(lines), data)
+	}
+	for _, line := range lines {
+		var record audit.Record
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.RequestID == "" || record.RemoteAddr != "127.0.0.1:43210" || record.Action == "" || record.Outcome == "" {
+			t.Fatalf("incomplete audit record: %#v", record)
+		}
+	}
+	for _, secret := range []string{"secret-canary.test", "PRIVATE KEY", "confirm_server_key_generation"} {
+		if bytes.Contains(data, []byte(secret)) {
+			t.Fatalf("audit leaked %q: %s", secret, data)
+		}
+	}
 }
 
 func (f *fakeService) Status(context.Context) (Status, error) {
@@ -31,13 +73,39 @@ func (f *fakeService) Initialize(_ context.Context, organization string) error {
 }
 
 func (f *fakeService) Issue(_ context.Context, kind string, req IssueRequest) (CertificateRecord, error) {
+	f.issueCalls++
 	f.issuedKind, f.issued = kind, req
 	return CertificateRecord{ID: req.Name, Kind: kind}, nil
+}
+
+func TestAuditUnavailableFailsIssuanceClosed(t *testing.T) {
+	svc := &fakeService{}
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	if err := os.Mkdir(auditPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	h := New(Options{Service: svc, Auditor: audit.New(auditPath)})
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/rsa", bytes.NewBufferString(`{"name":"blocked","common_name":"blocked.test","valid_days":30,"confirm_server_key_generation":true}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), `"code":"audit_failure"`) {
+		t.Fatalf("response: status=%d body=%s", w.Code, w.Body.String())
+	}
+	if svc.issueCalls != 0 {
+		t.Fatalf("issuance ran %d times while audit was unavailable", svc.issueCalls)
+	}
 }
 
 func (f *fakeService) List(context.Context) ([]CertificateRecord, error) { return nil, nil }
 
 func (f *fakeService) Download(context.Context, string, string) (Download, error) {
+	return Download{}, ErrFileNotAllowed
+}
+func (f *fakeService) Bundle(context.Context, string) (Download, error) {
+	return Download{}, ErrFileNotAllowed
+}
+func (f *fakeService) RootCA(context.Context, string) (Download, error) {
 	return Download{}, ErrFileNotAllowed
 }
 

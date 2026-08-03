@@ -21,14 +21,14 @@ OpenSSL configuration and CA database files.
 ## Trust and security boundary
 
 This is an experimental private PKI, not a public trust service. The service
-runs as an unprivileged account. CA keys live outside the Web root with mode
-0600. The initial release supports encrypted file keys; PKCS#11/HSM support is
+runs as an unprivileged account. CA keys live outside the Web root, are AES-256
+encrypted, and have mode 0600. PKCS#11/HSM support is
 a later extension point.
 
 ## Packaging
 
-- `certarium`: static service binary, UI assets, service unit, and defaults.
-- `certarium-tongsuo`: pinned Tongsuo CLI/runtime built for the target baseline.
+- one `certarium` package: service, backup tool, UI, systemd unit, defaults, and
+  pinned Tongsuo CLI/runtime built for the target baseline.
 - runtime state: `/var/lib/certarium` (created during initialization, never packaged).
 - configuration: `/etc/certarium`.
 - logs: system journal plus `/var/log/certarium` where file logs are required.

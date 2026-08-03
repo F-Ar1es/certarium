@@ -37,8 +37,12 @@ their own licenses as documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTIC
 
 ## Status
 
-The repository is being reshaped into the first runnable MVP. See
-`docs/PRODUCT.md` for scope and acceptance criteria.
+The first runnable MVP includes encrypted CA keys, auditable operations,
+encrypted backup/restore, RPM/DEB packaging, and CI/release automation. See
+[`docs/PRODUCT.md`](docs/PRODUCT.md), [`docs/INSTALL.md`](docs/INSTALL.md),
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md),
+[`docs/BACKUP-RESTORE.md`](docs/BACKUP-RESTORE.md), and
+[`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Linux packages
 
@@ -52,7 +56,7 @@ it does not download dependencies or generate CA material during installation.
 - The systemd service runs as the unprivileged `certarium` account and listens
   on `127.0.0.1:8080` by default.
 - Durable PKI state is stored in `/var/lib/certarium`; ordinary package removal
-  preserves that state and `/etc/certarium/certarium.env`.
+  preserves that state, `/etc/certarium/ca.pass`, and configuration.
 
 On an Apple-silicon Mac with Apple Container installed, reproduce both packages
 and their clean-install tests with:

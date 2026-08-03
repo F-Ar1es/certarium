@@ -1,6 +1,8 @@
 package webapp
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"certarium/internal/pki"
 )
@@ -89,6 +92,9 @@ func (s *PKIService) Issue(ctx context.Context, kind string, input IssueRequest)
 		DNSNames:    append([]string(nil), input.DNSNames...),
 		IPAddresses: append([]string(nil), input.IPAddresses...), ValidDays: input.ValidDays,
 	}
+	now := time.Now().UTC()
+	record.IssuedAt = now.Format(time.RFC3339)
+	record.ExpiresAt = now.Add(time.Duration(input.ValidDays) * 24 * time.Hour).Format(time.RFC3339)
 	manifest := bundleManifest{CertificateRecord: record}
 	switch kind {
 	case "rsa":
@@ -97,6 +103,8 @@ func (s *PKIService) Issue(ctx context.Context, kind string, input IssueRequest)
 			return CertificateRecord{}, mapPKIError(issueErr)
 		}
 		manifest.Files = []string{filepath.Base(bundle.CertificatePath), filepath.Base(bundle.KeyPath)}
+		record.Serials = []uint64{bundle.Serial}
+		record.Purpose = "TLS Web Server Authentication"
 	case "tlcp":
 		bundle, issueErr := s.engine.IssueTLCP(ctx, req)
 		if issueErr != nil {
@@ -106,9 +114,12 @@ func (s *PKIService) Issue(ctx context.Context, kind string, input IssueRequest)
 			filepath.Base(bundle.Signing.CertificatePath), filepath.Base(bundle.Signing.KeyPath),
 			filepath.Base(bundle.Encryption.CertificatePath), filepath.Base(bundle.Encryption.KeyPath),
 		}
+		record.Serials = []uint64{bundle.Signing.Serial, bundle.Encryption.Serial}
+		record.Purpose = "TLCP Signing and Encryption"
 	default:
 		return CertificateRecord{}, ErrInvalid
 	}
+	manifest.CertificateRecord = record
 	if err := writeManifest(filepath.Join(s.dataDir, "pki", "issued", input.Name, manifestName), manifest); err != nil {
 		return CertificateRecord{}, err
 	}
@@ -265,6 +276,65 @@ func (s *PKIService) Download(_ context.Context, id, name string) (Download, err
 		contentType = "application/octet-stream"
 	}
 	return Download{Name: name, ContentType: contentType, Data: data, Private: private}, nil
+}
+
+func (s *PKIService) Bundle(_ context.Context, id string) (Download, error) {
+	if !safeRouteSegment(id) {
+		return Download{}, ErrFileNotAllowed
+	}
+	dir := filepath.Join(s.dataDir, "pki", "issued", id)
+	manifest, err := readManifest(filepath.Join(dir, manifestName))
+	if err != nil || manifest.ID != id {
+		return Download{}, ErrFileNotAllowed
+	}
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, name := range manifest.Files {
+		if !safeRouteSegment(name) {
+			writer.Close()
+			return Download{}, ErrFileNotAllowed
+		}
+		file := filepath.Join(dir, name)
+		info, err := os.Lstat(file)
+		if err != nil || !info.Mode().IsRegular() {
+			writer.Close()
+			return Download{}, ErrFileNotAllowed
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			writer.Close()
+			return Download{}, ErrFileNotAllowed
+		}
+		entry, err := writer.Create(name)
+		if err != nil {
+			writer.Close()
+			return Download{}, err
+		}
+		if _, err := entry.Write(data); err != nil {
+			writer.Close()
+			return Download{}, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return Download{}, err
+	}
+	return Download{Name: id + ".zip", ContentType: "application/zip", Data: buffer.Bytes(), Private: true}, nil
+}
+
+func (s *PKIService) RootCA(_ context.Context, kind string) (Download, error) {
+	if kind != "rsa" && kind != "sm2" {
+		return Download{}, ErrFileNotAllowed
+	}
+	file := filepath.Join(s.dataDir, "pki", "ca", kind, "root-ca.crt")
+	info, err := os.Lstat(file)
+	if err != nil || !info.Mode().IsRegular() {
+		return Download{}, ErrFileNotAllowed
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return Download{}, ErrFileNotAllowed
+	}
+	return Download{Name: kind + "-root-ca.crt", ContentType: "application/x-pem-file", Data: data}, nil
 }
 
 func toPKIRequest(input IssueRequest) (pki.Request, error) {

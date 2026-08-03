@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"certarium/internal/audit"
 	"certarium/internal/pki"
 	"certarium/internal/webapp"
 )
@@ -19,6 +20,7 @@ func main() {
 	dataDir := flag.String("data-dir", "./data", "state directory")
 	tongsuo := flag.String("tongsuo", "/opt/tongsuo/bin/openssl", "Tongsuo executable")
 	cryptoTimeout := flag.Duration("crypto-timeout", 30*time.Second, "cryptographic command timeout")
+	passphraseFile := flag.String("ca-passphrase-file", "", "private file containing the CA-key passphrase")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -27,6 +29,10 @@ func main() {
 	}
 	if !webapp.IsLoopbackListen(*listen) {
 		log.Fatal("v0.1 only supports an explicit loopback listen address")
+	}
+	passphrase, err := pki.LoadPassphraseFile(*passphraseFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 	if err := os.MkdirAll(*dataDir, 0700); err != nil {
 		log.Fatal(err)
@@ -37,9 +43,9 @@ func main() {
 
 	store := pki.NewStore(*dataDir)
 	runner := pki.CommandRunner{Executable: *tongsuo, Timeout: *cryptoTimeout}
-	engine := pki.NewEngine(store, runner)
+	engine := pki.NewEngineWithPassphrase(store, runner, passphrase)
 	service := webapp.NewPKIService(*dataDir, store, engine)
-	handler := webapp.New(webapp.Options{Service: service, Version: version})
+	handler := webapp.New(webapp.Options{Service: service, Version: version, Auditor: audit.New(*dataDir + "/audit.jsonl")})
 	server := &http.Server{
 		Addr:              *listen,
 		Handler:           handler,

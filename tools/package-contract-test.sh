@@ -16,6 +16,7 @@ grep -F 'ReadWritePaths=/var/lib/certarium' "$UNIT"
 grep -F '/usr/bin/certarium -listen 127.0.0.1:8080' "$UNIT"
 grep -F -- '-data-dir /var/lib/certarium' "$UNIT"
 grep -F -- '-tongsuo /opt/certarium/bin/openssl' "$UNIT"
+grep -F -- '-ca-passphrase-file /etc/certarium/ca.pass' "$UNIT"
 
 test -s "$ENV_FILE"
 grep -Fx 'CERTARIUM_CRYPTO_TIMEOUT=30s' "$ENV_FILE"
@@ -35,6 +36,10 @@ done
 grep -F 'License: AGPL-3.0-only' "$ROOT/packaging/rpm/certarium.spec"
 grep -F 'certarium.env.default' "$ROOT/packaging/rpm/certarium.spec"
 grep -F 'if [ ! -e /etc/certarium/certarium.env ]; then' "$ROOT/packaging/rpm/certarium.spec"
+grep -F 'openssl rand -hex 32' "$ROOT/packaging/rpm/certarium.spec"
+grep -F 'chmod 0400' "$ROOT/packaging/rpm/certarium.spec"
+grep -F 'openssl rand -hex 32' "$ROOT/packaging/deb/postinst"
+grep -F 'chmod 0400' "$ROOT/packaging/deb/postinst"
 grep -F '[ -d /run/systemd/system ]' "$ROOT/packaging/rpm/certarium.spec"
 for script in postinst prerm postrm; do
     grep -F '[ -d /run/systemd/system ]' "$ROOT/packaging/deb/$script"

@@ -90,6 +90,34 @@ func TestInitializeAuthoritiesCreatesIndependentRSAAndSM2Roots(t *testing.T) {
 	}
 }
 
+func TestEncryptedAuthorityCommandsNeverExposePassphraseInArguments(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	const secret = "argument-secret-canary"
+	if err := NewEngineWithPassphrase(store, runner, secret).InitializeAuthorities(context.Background(), "Example Lab"); err != nil {
+		t.Fatal(err)
+	}
+	var encrypted, passin bool
+	for _, args := range runner.calls {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, secret) {
+			t.Fatalf("passphrase leaked into argv: %v", args)
+		}
+		if containsArgument(args, "-aes-256-cbc") && containsArgument(args, "env:CERTARIUM_CA_PASSPHRASE") {
+			encrypted = true
+		}
+		if containsArgument(args, "-passin") && containsArgument(args, "env:CERTARIUM_CA_PASSPHRASE") {
+			passin = true
+		}
+	}
+	if !encrypted || !passin {
+		t.Fatalf("encrypted=%v passin=%v calls=%v", encrypted, passin, runner.calls)
+	}
+}
+
 func TestInitializeAuthoritiesRejectsUnsafeOrganizationBeforeCrypto(t *testing.T) {
 	store := NewStore(t.TempDir())
 	if err := store.Initialize(); err != nil {

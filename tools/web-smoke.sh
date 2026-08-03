@@ -18,7 +18,9 @@ trap cleanup EXIT HUP INT TERM
 
 cd "$ROOT"
 $GO_BIN build -trimpath -o "$TMP_DIR/certarium" ./cmd/certarium
-"$TMP_DIR/certarium" -listen 127.0.0.1:18081 -data-dir "$TMP_DIR/data" -tongsuo "$OPENSSL_BIN" >"$TMP_DIR/server.log" 2>&1 &
+printf '%s\n' 'web-smoke-passphrase' >"$TMP_DIR/ca.pass"
+chmod 0400 "$TMP_DIR/ca.pass"
+"$TMP_DIR/certarium" -listen 127.0.0.1:18081 -data-dir "$TMP_DIR/data" -tongsuo "$OPENSSL_BIN" -ca-passphrase-file "$TMP_DIR/ca.pass" >"$TMP_DIR/server.log" 2>&1 &
 PID=$!
 
 attempt=0

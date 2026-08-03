@@ -16,9 +16,10 @@ type Runner interface {
 }
 
 type Engine struct {
-	store  *Store
-	runner Runner
-	mu     sync.Mutex
+	store      *Store
+	runner     Runner
+	passphrase bool
+	mu         sync.Mutex
 }
 
 type Bundle struct {
@@ -34,6 +35,20 @@ type TLCPBundle struct {
 
 func NewEngine(store *Store, runner Runner) *Engine {
 	return &Engine{store: store, runner: runner}
+}
+
+func NewEngineWithPassphrase(store *Store, runner Runner, passphrase string) *Engine {
+	if command, ok := runner.(CommandRunner); ok {
+		filtered := command.Env[:0]
+		for _, value := range command.Env {
+			if !strings.HasPrefix(value, "CERTARIUM_CA_PASSPHRASE=") {
+				filtered = append(filtered, value)
+			}
+		}
+		command.Env = append(filtered, "CERTARIUM_CA_PASSPHRASE="+passphrase)
+		runner = command
+	}
+	return &Engine{store: store, runner: runner, passphrase: passphrase != ""}
 }
 
 func (e *Engine) InitializeAuthorities(ctx context.Context, organization string) error {
@@ -80,13 +95,19 @@ func (e *Engine) InitializeAuthorities(ctx context.Context, organization string)
 	if err := os.WriteFile(caConfig, []byte(rootCAConfig), 0600); err != nil {
 		return fmt.Errorf("write root CA config: %w", err)
 	}
-	rsaReq := []string{"req", "-new", "-x509", "-sha256", "-config", caConfig, "-extensions", "v3_ca", "-key", rsaKey, "-subj", caSubject(organization, "RSA"), "-days", "3650", "-out", rsaCert}
-	sm2Req := []string{"req", "-new", "-x509", "-sm3", "-config", caConfig, "-extensions", "v3_ca", "-key", sm2Key, "-subj", caSubject(organization, "SM2"), "-days", "3650", "-out", sm2Cert}
+	rsaReq := e.withPassin([]string{"req", "-new", "-x509", "-sha256", "-config", caConfig, "-extensions", "v3_ca", "-key", rsaKey, "-subj", caSubject(organization, "RSA"), "-days", "3650", "-out", rsaCert})
+	sm2Req := e.withPassin([]string{"req", "-new", "-x509", "-sm3", "-config", caConfig, "-extensions", "v3_ca", "-key", sm2Key, "-subj", caSubject(organization, "SM2"), "-days", "3650", "-out", sm2Cert})
+	rsaGenerate := []string{"genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072"}
+	sm2Generate := []string{"genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:SM2"}
+	if e.passphrase {
+		rsaGenerate = append(rsaGenerate, "-aes-256-cbc", "-pass", "env:CERTARIUM_CA_PASSPHRASE")
+		sm2Generate = append(sm2Generate, "-aes-256-cbc", "-pass", "env:CERTARIUM_CA_PASSPHRASE")
+	}
 	commands := [][]string{
-		{"genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", rsaKey},
+		append(rsaGenerate, "-out", rsaKey),
 		rsaReq,
 		{"verify", "-CAfile", rsaCert, rsaCert},
-		{"genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:SM2", "-out", sm2Key},
+		append(sm2Generate, "-out", sm2Key),
 		sm2Req,
 		{"verify", "-CAfile", sm2Cert, sm2Cert},
 	}
@@ -145,17 +166,17 @@ func (e *Engine) PublishCRL(ctx context.Context, kind string, validCerts, revoke
 	}
 	all := append(append([]string(nil), validCerts...), revokedCerts...)
 	for _, cert := range all {
-		if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-valid", cert); err != nil {
+		if _, err := e.runner.Run(ctx, e.withPassin([]string{"ca", "-batch", "-config", config, "-valid", cert})...); err != nil {
 			return fmt.Errorf("register certificate for CRL: %w", err)
 		}
 	}
 	for _, cert := range revokedCerts {
-		if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-revoke", cert, "-crl_reason", "unspecified"); err != nil {
+		if _, err := e.runner.Run(ctx, e.withPassin([]string{"ca", "-batch", "-config", config, "-revoke", cert, "-crl_reason", "unspecified"})...); err != nil {
 			return fmt.Errorf("revoke certificate: %w", err)
 		}
 	}
 	generated := filepath.Join(temp, kind+".crl.pem")
-	if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-gencrl", "-out", generated); err != nil {
+	if _, err := e.runner.Run(ctx, e.withPassin([]string{"ca", "-batch", "-config", config, "-gencrl", "-out", generated})...); err != nil {
 		return fmt.Errorf("generate CRL: %w", err)
 	}
 	if _, err := e.runner.Run(ctx, "crl", "-in", generated, "-noout", "-verify", "-CAfile", filepath.Join(caDir, "root-ca.crt")); err != nil {
@@ -212,10 +233,10 @@ func (e *Engine) RespondOCSP(ctx context.Context, kind string, request []byte) (
 	}
 	caCert := filepath.Join(caDir, "root-ca.crt")
 	caKey := filepath.Join(caDir, "root-ca.key")
-	if _, err := e.runner.Run(ctx,
+	if _, err := e.runner.Run(ctx, e.withPassin([]string{
 		"ocsp", "-index", index, "-rsigner", caCert, "-rkey", caKey,
 		"-CA", caCert, "-reqin", requestPath, "-respout", responsePath, "-ndays", "1",
-	); err != nil {
+	})...); err != nil {
 		return nil, fmt.Errorf("generate OCSP response: %w", err)
 	}
 	response, err := os.ReadFile(responsePath)
@@ -255,7 +276,7 @@ func (e *Engine) IssueRSA(ctx context.Context, req Request) (Bundle, error) {
 	commands := [][]string{
 		{"genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", key},
 		{"req", "-new", "-sha256", "-config", extPath, "-key", key, "-subj", "/CN=" + req.CommonName, "-out", csr},
-		{"x509", "-req", "-sha256", "-in", csr, "-CA", ca.cert, "-CAkey", ca.key, "-set_serial", strconv.FormatUint(serial, 10), "-days", strconv.Itoa(req.ValidDays), "-extfile", extPath, "-extensions", "server_cert", "-out", cert},
+		e.withPassin([]string{"x509", "-req", "-sha256", "-in", csr, "-CA", ca.cert, "-CAkey", ca.key, "-set_serial", strconv.FormatUint(serial, 10), "-days", strconv.Itoa(req.ValidDays), "-extfile", extPath, "-extensions", "server_cert", "-out", cert}),
 		{"verify", "-CAfile", ca.cert, cert},
 	}
 	if err := e.runAll(ctx, commands); err != nil {
@@ -314,6 +335,11 @@ func (e *Engine) IssueTLCP(ctx context.Context, req Request) (TLCPBundle, error)
 		[]string{"verify", "-CAfile", ca.cert, signCert},
 		[]string{"verify", "-CAfile", ca.cert, encCert},
 	)
+	for i := range commands {
+		if hasArgument(commands[i], "-CAkey") {
+			commands[i] = e.withPassin(commands[i])
+		}
+	}
 	if err := e.runAll(ctx, commands); err != nil {
 		return TLCPBundle{}, err
 	}
@@ -365,6 +391,23 @@ func (e *Engine) runAll(ctx context.Context, commands [][]string) error {
 		}
 	}
 	return nil
+}
+
+func (e *Engine) withPassin(args []string) []string {
+	result := append([]string(nil), args...)
+	if e.passphrase {
+		result = append(result, "-passin", "env:CERTARIUM_CA_PASSPHRASE")
+	}
+	return result
+}
+
+func hasArgument(args []string, value string) bool {
+	for _, arg := range args {
+		if arg == value {
+			return true
+		}
+	}
+	return false
 }
 
 func bundleFiles(dir, prefix string) (string, string, string) {

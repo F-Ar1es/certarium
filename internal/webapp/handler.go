@@ -1,15 +1,20 @@
 package webapp
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"certarium/internal/audit"
 )
 
 var (
@@ -37,10 +42,14 @@ type CertificateRecord struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"`
 	State       string   `json:"state"`
+	Serials     []uint64 `json:"serials,omitempty"`
+	Purpose     string   `json:"purpose,omitempty"`
 	CommonName  string   `json:"common_name,omitempty"`
 	DNSNames    []string `json:"dns_names,omitempty"`
 	IPAddresses []string `json:"ip_addresses,omitempty"`
 	ValidDays   int      `json:"valid_days,omitempty"`
+	IssuedAt    string   `json:"issued_at,omitempty"`
+	ExpiresAt   string   `json:"expires_at,omitempty"`
 }
 
 type Download struct {
@@ -56,6 +65,8 @@ type Service interface {
 	Issue(context.Context, string, IssueRequest) (CertificateRecord, error)
 	List(context.Context) ([]CertificateRecord, error)
 	Download(context.Context, string, string) (Download, error)
+	Bundle(context.Context, string) (Download, error)
+	RootCA(context.Context, string) (Download, error)
 	Revoke(context.Context, string) (CertificateRecord, error)
 	CRL(context.Context, string) (Download, error)
 	OCSP(context.Context, string, []byte) ([]byte, error)
@@ -64,6 +75,7 @@ type Service interface {
 type Options struct {
 	Service Service
 	Version string
+	Auditor *audit.Log
 }
 
 type handler struct {
@@ -82,10 +94,16 @@ func New(options Options) http.Handler {
 	h.mux.HandleFunc("GET /api/v1/certificates", h.list)
 	h.mux.HandleFunc("POST /api/v1/certificates/{kind}", h.issue)
 	h.mux.HandleFunc("GET /api/v1/certificates/{id}/files/{file}", h.download)
+	h.mux.HandleFunc("GET /api/v1/certificates/{id}/bundle.zip", h.bundle)
+	h.mux.HandleFunc("GET /api/v1/ca/{kind}", h.rootCA)
 	h.mux.HandleFunc("POST /api/v1/certificates/{id}/revoke", h.revoke)
 	h.mux.HandleFunc("GET /api/v1/crl/{kind}", h.crl)
 	h.mux.HandleFunc("POST /ocsp/{kind}", h.ocsp)
-	return securityHeaders(h)
+	base := securityHeaders(h)
+	if options.Auditor != nil {
+		return auditRequests(base, options.Auditor)
+	}
+	return base
 }
 
 func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -181,6 +199,24 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, "not_found", "资源不存在")
 			return
 		}
+		writeServiceError(w, err)
+		return
+	}
+	serveDownload(w, download)
+}
+
+func (h *handler) bundle(w http.ResponseWriter, r *http.Request) {
+	download, err := h.service.Bundle(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	serveDownload(w, download)
+}
+
+func (h *handler) rootCA(w http.ResponseWriter, r *http.Request) {
+	download, err := h.service.RootCA(r.Context(), r.PathValue("kind"))
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -329,4 +365,97 @@ func IsLoopbackListen(address string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+type bufferedResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func (w *bufferedResponse) Header() http.Header { return w.header }
+func (w *bufferedResponse) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+func (w *bufferedResponse) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(data)
+}
+
+func auditRequests(next http.Handler, log *audit.Log) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action, resource, required := auditTarget(r)
+		if !required {
+			next.ServeHTTP(w, r)
+			return
+		}
+		requestID, err := newRequestID()
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "audit_failure", "审计记录不可用")
+			return
+		}
+		if err := log.Ready(); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "audit_failure", "审计记录不可用")
+			return
+		}
+		capture := &bufferedResponse{header: make(http.Header)}
+		next.ServeHTTP(capture, r)
+		if capture.status == 0 {
+			capture.status = http.StatusOK
+		}
+		outcome := "success"
+		errorCode := ""
+		if capture.status >= 400 {
+			outcome = "failure"
+			var body struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(capture.body.Bytes(), &body)
+			errorCode = body.Code
+		}
+		if err := log.Append(audit.Record{
+			Time: time.Now().UTC(), RequestID: requestID, RemoteAddr: r.RemoteAddr,
+			Action: action, Resource: resource, Outcome: outcome, ErrorCode: errorCode,
+		}); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "audit_failure", "审计记录不可用")
+			return
+		}
+		for name, values := range capture.header {
+			w.Header()[name] = append([]string(nil), values...)
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		w.WriteHeader(capture.status)
+		_, _ = w.Write(capture.body.Bytes())
+	})
+}
+
+func auditTarget(r *http.Request) (string, string, bool) {
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	switch {
+	case r.Method == http.MethodPost && path == "api/v1/initialize":
+		return "initialize", "ca", true
+	case r.Method == http.MethodPost && len(parts) == 4 && strings.Join(parts[:3], "/") == "api/v1/certificates":
+		return "issue", parts[3], true
+	case r.Method == http.MethodPost && len(parts) == 5 && strings.Join(parts[:3], "/") == "api/v1/certificates" && parts[4] == "revoke":
+		return "revoke", parts[3], true
+	case r.Method == http.MethodGet && len(parts) == 6 && strings.Join(parts[:3], "/") == "api/v1/certificates" && parts[4] == "files":
+		return "download", parts[3] + "/" + parts[5], true
+	case r.Method == http.MethodGet && len(parts) == 5 && strings.Join(parts[:3], "/") == "api/v1/certificates" && parts[4] == "bundle.zip":
+		return "download_bundle", parts[3], true
+	default:
+		return "", "", false
+	}
+}
+
+func newRequestID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate request ID: %w", err)
+	}
+	return fmt.Sprintf("%x", value[:]), nil
 }

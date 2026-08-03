@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build RPM and DEB
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}" ./scripts/build-packages-linux.sh
+      - name: Install and exercise packages
+        run: ./scripts/test-install-packages-linux.sh
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/certarium-*.x86_64.rpm \
+            dist/certarium_*_amd64.deb \
+            dist/SHA256SUMS-packages \
+            dist/TONGSUO-GLIBC-VERSIONS.txt \
+            --title "Certarium ${GITHUB_REF_NAME}" \
+            --notes "Experimental local RSA/SM2/TLCP PKI workbench. Not a public-trust or production CA."

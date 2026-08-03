@@ -34,6 +34,13 @@ exit 0
 if [ ! -e /etc/certarium/certarium.env ]; then
     /usr/bin/install -m 0644 /usr/share/certarium/certarium.env.default /etc/certarium/certarium.env
 fi
+if [ ! -e /etc/certarium/ca.pass ] && [ ! -L /etc/certarium/ca.pass ]; then
+    umask 077
+    /opt/certarium/bin/openssl rand -hex 32 > /etc/certarium/.ca.pass.new
+    /bin/chown certarium:certarium /etc/certarium/.ca.pass.new
+    /bin/chmod 0400 /etc/certarium/.ca.pass.new
+    /bin/mv /etc/certarium/.ca.pass.new /etc/certarium/ca.pass
+fi
 if [ -d /run/systemd/system ] && [ -x /bin/systemctl ]; then
     /bin/systemctl daemon-reload >/dev/null 2>&1 || :
     /bin/systemctl enable --now certarium.service >/dev/null 2>&1 || :
@@ -60,6 +67,7 @@ exit 0
 %doc /usr/share/doc/certarium/Tongsuo-LICENSE.txt
 %doc /usr/share/doc/certarium/BUILD-MANIFEST.txt
 /usr/bin/certarium
+/usr/bin/certarium-backup
 /opt/certarium/bin/openssl
 /opt/certarium/lib/ossl-modules
 /usr/lib/systemd/system/certarium.service

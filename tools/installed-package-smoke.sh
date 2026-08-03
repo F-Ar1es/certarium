@@ -26,12 +26,14 @@ if [ "${CERTARIUM_SKIP_INSTALLED_DOC_CHECK:-0}" != 1 ]; then
     test -s /usr/share/doc/certarium/Tongsuo-LICENSE.txt
 fi
 test -x /usr/bin/certarium
+test -x /usr/bin/certarium-backup
 test -x "$OPENSSL"
 "$OPENSSL" version | grep -F 'Tongsuo 8.4.0'
 
 install -d -m 0700 -o certarium -g certarium "$STATE"
 runuser -u certarium -- /usr/bin/certarium \
     -listen "127.0.0.1:$PORT" -data-dir "$STATE" -tongsuo "$OPENSSL" \
+    -ca-passphrase-file /etc/certarium/ca.pass \
     >"$WORK/server.log" 2>&1 &
 PID=$!
 

@@ -6,7 +6,9 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-      -ldflags "-s -w -X main.version=${VERSION}" -o /certarium ./cmd/certarium
+      -ldflags "-s -w -X main.version=${VERSION}" -o /certarium ./cmd/certarium \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION}" -o /certarium-backup ./cmd/certarium-backup
 
 FROM docker.io/library/debian:12-slim AS source
 ARG TONGSUO_COMMIT
@@ -36,6 +38,7 @@ RUN cd Tongsuo \
  && make -j2 build_sw \
  && make install_sw
 COPY --from=app /certarium /build/certarium
+COPY --from=app /certarium-backup /build/certarium-backup
 COPY packaging /src/packaging
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL_LICENSE.md /src/
 COPY VERSIONS.env /src/VERSIONS.env

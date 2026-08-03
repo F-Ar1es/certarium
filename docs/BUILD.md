@@ -1,19 +1,18 @@
-# Core build notes
+# Build and verification
 
-The core is built in a CentOS 7 userspace to keep its glibc symbol baseline at
-2.17 or older. Apple container runs the amd64 build under Rosetta on Apple
-Silicon.
+Certarium is a Go service plus a pinned Tongsuo 8.4.0 runtime. Release packages
+are built in CentOS 7 userspace to retain the x86_64 glibc 2.17 baseline.
 
-The build intentionally excludes HTTP gzip and HTTP Basic Authentication:
+```sh
+# Apple Silicon with Apple Container
+./scripts/build-packages-apple-container.sh
+./scripts/test-install-packages-apple-container.sh
 
-- Disabling gzip avoids Nginx certificate-compression feature detection against
-  a TLS library that does not expose the BoringSSL `CBB` API.
-- Disabling Basic Authentication avoids a runtime dependency on `libcrypt`.
+# x86_64 Linux with Docker
+./scripts/build-packages-linux.sh
+./scripts/test-install-packages-linux.sh
+```
 
-Neither module is required for TLS/TLCP termination, reverse proxying, load
-balancing, OCSP publication or the future Web control plane.
-
-PCRE2 and Tongsuo are compiled into the Nginx binary. The resulting archive
-contains dependency and glibc symbol reports which must be reviewed before it is
-accepted as CentOS 7 compatible.
-
+Artifacts and `SHA256SUMS` go to `dist/`. `tools/gauntlet.sh` is the single
+verification entry point. No CA, key, password, certificate database, backup,
+or audit log belongs in source control or release packages.

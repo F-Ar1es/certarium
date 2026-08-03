@@ -47,10 +47,13 @@ GO_BIN="$GO_BIN" ./tools/mutation-test.sh
 GO_BIN="$GO_BIN" ./tools/web-mutation-test.sh
 ./tools/package-contract-test.sh
 ./tools/package-mutation-test.sh
+GO_BIN="$GO_BIN" ./tools/release-mutation-test.sh
 
 echo "== build and real HTTP health request =="
 $GO_BIN build -trimpath -o "$TMP_DIR/certarium" ./cmd/certarium
-"$TMP_DIR/certarium" -listen 127.0.0.1:18080 -data-dir "$TMP_DIR/data" >"$TMP_DIR/server.log" 2>&1 &
+printf '%s\n' 'gauntlet-passphrase' >"$TMP_DIR/ca.pass"
+chmod 0400 "$TMP_DIR/ca.pass"
+"$TMP_DIR/certarium" -listen 127.0.0.1:18080 -data-dir "$TMP_DIR/data" -ca-passphrase-file "$TMP_DIR/ca.pass" >"$TMP_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 attempt=0
 until curl --fail --silent --show-error http://127.0.0.1:18080/api/v1/health >"$TMP_DIR/health.json"; do
