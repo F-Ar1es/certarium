@@ -7,7 +7,7 @@ workspace_dir=$(CDPATH= cd -- "$project_dir/.." && pwd)
 
 . "$project_dir/VERSIONS.env"
 
-image=tlslab-core-builder:centos7-amd64
+image=certarium-nginx-interop-builder:centos7-amd64
 output_dir="$project_dir/.build/output"
 
 test -f "$workspace_dir/nginx-gm-poc/patches/nginx-1.30.4-tongsuo-ntls.patch"
@@ -31,10 +31,9 @@ container run \
   --volume "$output_dir:/out" \
   "$image"
 
-cp "$output_dir/tlslab-core-linux-amd64.tar.gz" "$project_dir/dist/"
+cp "$output_dir/certarium-nginx-interop-linux-amd64.tar.gz" "$project_dir/dist/"
 cp "$output_dir/SHA256SUMS" "$project_dir/dist/"
 
 printf '%s\n' "Artifacts:" \
-  "$project_dir/dist/tlslab-core-linux-amd64.tar.gz" \
+  "$project_dir/dist/certarium-nginx-interop-linux-amd64.tar.gz" \
   "$project_dir/dist/SHA256SUMS"
-

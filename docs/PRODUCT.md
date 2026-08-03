@@ -1,4 +1,4 @@
-# CertLab GM v0.1 scope
+# Certarium v0.1 scope
 
 ## User outcome
 
@@ -27,8 +27,8 @@ a later extension point.
 
 ## Packaging
 
-- `certlab-gm`: static service binary, UI assets, service unit, and defaults.
-- `certlab-gm-tongsuo`: pinned Tongsuo CLI/runtime built for the target baseline.
-- runtime state: `/var/lib/certlab-gm` (created during initialization, never packaged).
-- configuration: `/etc/certlab-gm`.
-- logs: system journal plus `/var/log/certlab-gm` where file logs are required.
+- `certarium`: static service binary, UI assets, service unit, and defaults.
+- `certarium-tongsuo`: pinned Tongsuo CLI/runtime built for the target baseline.
+- runtime state: `/var/lib/certarium` (created during initialization, never packaged).
+- configuration: `/etc/certarium`.
+- logs: system journal plus `/var/log/certarium` where file logs are required.

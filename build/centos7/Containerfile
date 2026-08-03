@@ -71,7 +71,7 @@ RUN for attempt in 1 2 3; do \
 
 COPY nginx-gm-poc/patches/nginx-1.30.4-tongsuo-ntls.patch /work/ntls.patch
 COPY nginx-gm-poc/modules/ngx_tongsuo_ntls /work/ngx_tongsuo_ntls
-COPY tlslab/build/centos7/build-core.sh /usr/local/bin/build-core
+COPY certarium/build/centos7/build-core.sh /usr/local/bin/build-core
 
 RUN chmod 0755 /usr/local/bin/build-core
 

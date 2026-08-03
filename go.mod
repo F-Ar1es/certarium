@@ -1,3 +1,3 @@
-module certlab-gm
+module certarium
 
 go 1.22

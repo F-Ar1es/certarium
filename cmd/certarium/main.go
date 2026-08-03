@@ -27,12 +27,12 @@ type health struct {
 
 var home = template.Must(template.New("home").Parse(`<!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>CertLab GM</title><style>
+<title>Certarium</title><style>
 body{font:16px system-ui;max-width:920px;margin:64px auto;padding:0 24px;color:#18202a}
 .card{border:1px solid #d9e0e7;border-radius:14px;padding:24px;box-shadow:0 8px 30px #16202a0d}
 .tag{display:inline-block;background:#e8f6ee;color:#176b3a;padding:5px 10px;border-radius:999px}
 </style><body><main class="card"><span class="tag">服务已启动</span>
-<h1>CertLab GM</h1><p>标准证书与国密证书实验工作台。</p>
+<h1>Certarium</h1><p>标准证书与国密证书实验工作台。</p>
 <p>当前为 v0.1 骨架：下一步接入 CA 初始化、RSA 证书和 TLCP 双证书签发。</p>
 </main></body></html>`))
 
@@ -69,7 +69,7 @@ func main() {
 	})
 
 	server := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("CertLab GM %s listening on %s", version, cfg.Listen)
+	log.Printf("Certarium %s listening on %s", version, cfg.Listen)
 	log.Fatal(server.ListenAndServe())
 }
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-stage=/out/tlslab-core
+stage=/out/certarium-nginx-interop
 nginx_src=/work/nginx
 tongsuo_src=/work/tongsuo
 pcre2_src=/work/pcre2
@@ -15,12 +15,12 @@ git apply --check /work/ntls.patch
 git apply /work/ntls.patch
 
 auto/configure \
-  --prefix=/opt/tlslab/runtime/nginx \
-  --sbin-path=/opt/tlslab/runtime/nginx/sbin/nginx \
-  --conf-path=/opt/tlslab/runtime/nginx/conf/nginx.conf \
-  --pid-path=/run/tlslab-nginx.pid \
-  --error-log-path=/var/log/tlslab/nginx-error.log \
-  --http-log-path=/var/log/tlslab/nginx-access.log \
+  --prefix=/opt/certarium/examples/nginx \
+  --sbin-path=/opt/certarium/examples/nginx/sbin/nginx \
+  --conf-path=/opt/certarium/examples/nginx/conf/nginx.conf \
+  --pid-path=/run/certarium-nginx-example.pid \
+  --error-log-path=/var/log/certarium/nginx-example-error.log \
+  --http-log-path=/var/log/certarium/nginx-example-access.log \
   --with-http_ssl_module \
   --with-http_stub_status_module \
   --with-openssl="$tongsuo_src" \
@@ -44,7 +44,7 @@ cp "$tongsuo_src/LICENSE.txt" "$stage/licenses/tongsuo-LICENSE.txt"
 cp "$pcre2_src/LICENCE.md" "$stage/licenses/pcre2-LICENCE.md"
 
 {
-  echo 'TLSLab core build manifest'
+  echo 'Certarium Nginx/TLCP interoperability build manifest'
   echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "build_arch=$(uname -m)"
   echo "glibc=$(getconf GNU_LIBC_VERSION)"
@@ -65,5 +65,5 @@ strings "$stage/bin/nginx" \
 test -s "$stage/NTLS-SYMBOLS.txt"
 test "$(uname -m)" = x86_64
 
-(cd /out && tar -czf tlslab-core-linux-amd64.tar.gz tlslab-core)
-(cd /out && sha256sum tlslab-core-linux-amd64.tar.gz > SHA256SUMS)
+(cd /out && tar -czf certarium-nginx-interop-linux-amd64.tar.gz certarium-nginx-interop)
+(cd /out && sha256sum certarium-nginx-interop-linux-amd64.tar.gz > SHA256SUMS)

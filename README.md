@@ -1,6 +1,6 @@
-# CertLab GM
+# Certarium
 
-CertLab GM is a local PKI workbench for development and interoperability labs.
+Certarium is a self-hosted PKI workbench for development and interoperability labs.
 It makes RSA and Chinese-commercial-cryptography certificate issuance easier
 without acting as a TLS terminator, reverse proxy, or load balancer.
 
