@@ -24,6 +24,17 @@ Excluded:
 The existing Nginx + Tongsuo experiment is retained under `examples/` as a
 consumer interoperability example, not as part of the product data plane.
 
+## Project authorship and licensing
+
+The product concept and direction are by Carl Flynn. Implementation and
+verification are AI-assisted with OpenAI Codex; see
+[`AI_ASSISTED_DEVELOPMENT.md`](AI_ASSISTED_DEVELOPMENT.md).
+
+Original Certarium code is licensed under `AGPL-3.0-only`. A separate commercial
+license is available for organizations that cannot use the AGPL; see
+[`COMMERCIAL_LICENSE.md`](COMMERCIAL_LICENSE.md). Third-party components retain
+their own licenses as documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Status
 
 The repository is being reshaped into the first runnable MVP. See

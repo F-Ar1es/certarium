@@ -1,0 +1,12 @@
+Certarium
+Copyright 2026 Carl Flynn
+
+This product was conceived and directed by Carl Flynn and developed with
+AI-assisted implementation and verification using OpenAI Codex. See
+AI_ASSISTED_DEVELOPMENT.md.
+
+Certarium's original code is licensed under AGPL-3.0-only, with separate
+commercial licensing available from the copyright holder.
+
+Third-party software retains its original copyright and license. See
+THIRD_PARTY_NOTICES.md and the license files shipped with binary packages.
