@@ -1,6 +1,6 @@
 # Executable specification: local Web issuance MVP
 
-- Status: draft for human approval
+- Status: approved by standing project-owner authorization on 2026-08-03
 - Risk tier: 3 (CA initialization, server-generated private keys, public HTTP API)
 - Runtime dependencies proposed: none; Go standard library and pinned Tongsuo only
 - Default trust boundary: loopback-only HTTP service for a single lab operator
@@ -81,7 +81,7 @@
 
 ## Acceptance boundary
 
-Implementation may begin only after the project owner approves this document,
-especially these choices: loopback-only/no authentication for this increment,
-explicit but repeatable leaf private-key download, and deferring revocation/OCSP
-to the next independently verified increment.
+The project owner authorized implementation to continue without additional
+checkpoint approvals. The accepted choices are loopback-only/no authentication
+for this increment, explicit but repeatable leaf private-key download, and
+deferring revocation/OCSP to the next independently verified increment.

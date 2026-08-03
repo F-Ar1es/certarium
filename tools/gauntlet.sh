@@ -43,6 +43,7 @@ $GO_BIN tool cover -func="$TMP_DIR/coverage.out" | tee "$TMP_DIR/coverage.txt"
 
 echo "== manual mutation =="
 GO_BIN="$GO_BIN" ./tools/mutation-test.sh
+GO_BIN="$GO_BIN" ./tools/web-mutation-test.sh
 
 echo "== build and real HTTP health request =="
 $GO_BIN build -trimpath -o "$TMP_DIR/certarium" ./cmd/certarium
@@ -58,6 +59,9 @@ until curl --fail --silent --show-error http://127.0.0.1:18080/api/v1/health >"$
     sleep 0.1
 done
 grep -F '"status":"ok"' "$TMP_DIR/health.json"
+
+echo "== real Web/API issuance smoke =="
+GO_BIN="$GO_BIN" CERTARIUM_OPENSSL="$OPENSSL_BIN" ./tools/web-smoke.sh
 
 echo "== dependency, license, and secret checks =="
 $GO_BIN list -m all

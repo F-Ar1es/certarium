@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+GO_BIN=${GO_BIN:-go}
+OPENSSL_BIN=${CERTARIUM_OPENSSL:?CERTARIUM_OPENSSL must point to Tongsuo}
+TMP_DIR=$(mktemp -d)
+PID=
+
+cleanup() {
+    if [ -n "$PID" ]; then
+        kill "$PID" 2>/dev/null || true
+        wait "$PID" 2>/dev/null || true
+    fi
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT HUP INT TERM
+
+cd "$ROOT"
+$GO_BIN build -trimpath -o "$TMP_DIR/certarium" ./cmd/certarium
+"$TMP_DIR/certarium" -listen 127.0.0.1:18081 -data-dir "$TMP_DIR/data" -tongsuo "$OPENSSL_BIN" >"$TMP_DIR/server.log" 2>&1 &
+PID=$!
+
+attempt=0
+until curl --fail --silent http://127.0.0.1:18081/api/v1/status >"$TMP_DIR/status.json"; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+        cat "$TMP_DIR/server.log" >&2
+        exit 1
+    fi
+    sleep 0.1
+done
+grep -F '"initialized":false' "$TMP_DIR/status.json"
+
+curl --fail --silent --show-error -H 'Content-Type: application/json' \
+    -d '{"organization":"Certarium Web Smoke"}' \
+    http://127.0.0.1:18081/api/v1/initialize >"$TMP_DIR/init.json"
+grep -F '"initialized":true' "$TMP_DIR/init.json"
+
+curl --fail --silent --show-error -H 'Content-Type: application/json' \
+    -d '{"name":"rsa-smoke","common_name":"rsa-smoke.test","dns_names":["rsa-smoke.test"],"ip_addresses":["192.0.2.30"],"valid_days":30,"confirm_server_key_generation":true}' \
+    http://127.0.0.1:18081/api/v1/certificates/rsa >"$TMP_DIR/rsa.json"
+grep -F '"id":"rsa-smoke"' "$TMP_DIR/rsa.json"
+
+curl --fail --silent --show-error -H 'Content-Type: application/json' \
+    -d '{"name":"tlcp-smoke","common_name":"tlcp-smoke.test","dns_names":["tlcp-smoke.test"],"valid_days":30,"confirm_server_key_generation":true}' \
+    http://127.0.0.1:18081/api/v1/certificates/tlcp >"$TMP_DIR/tlcp.json"
+grep -F '"id":"tlcp-smoke"' "$TMP_DIR/tlcp.json"
+
+curl --fail --silent http://127.0.0.1:18081/api/v1/certificates >"$TMP_DIR/list.json"
+grep -F '"id":"rsa-smoke"' "$TMP_DIR/list.json"
+grep -F '"id":"tlcp-smoke"' "$TMP_DIR/list.json"
+
+curl --fail --silent --dump-header "$TMP_DIR/key.headers" \
+    http://127.0.0.1:18081/api/v1/certificates/rsa-smoke/files/server-rsa.key \
+    --output "$TMP_DIR/server-rsa.key"
+grep -i -F 'cache-control: no-store' "$TMP_DIR/key.headers"
+grep -F 'PRIVATE KEY' "$TMP_DIR/server-rsa.key"
+
+status=$(curl --silent --output "$TMP_DIR/denied.json" --write-out '%{http_code}' \
+    http://127.0.0.1:18081/api/v1/certificates/rsa-smoke/files/root-ca.key)
+test "$status" = "404"
+if grep -F 'root-ca.key' "$TMP_DIR/denied.json"; then
+    echo "denial response leaked forbidden filename" >&2
+    exit 1
+fi
+
+echo "WEB SMOKE PASSED"
