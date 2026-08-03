@@ -58,5 +58,11 @@ run_mutant download-symlink-rejection internal/webapp/pki_service.go \
 run_mutant safe-dom-rendering internal/webapp/ui.go \
     'title.textContent=' 'title.innerHTML=' \
     TestLocalWebUIAndScriptAreServedSafely
+run_mutant tlcp-pair-revocation internal/webapp/pki_service.go \
+    'for _, name := range manifest.Files {' 'for _, name := range manifest.Files[:1] {' \
+    TestTLCPRevocationIncludesBothCertificates
+run_mutant revoked-state-reporting internal/webapp/pki_service.go \
+    'target.State = "revoked"' 'target.State = "valid"' \
+    TestConcurrentRepeatedRevocationIsIdempotent
 
 echo "All Web/API manual mutants were killed."

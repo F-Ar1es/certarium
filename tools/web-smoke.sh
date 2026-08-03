@@ -51,6 +51,26 @@ curl --fail --silent http://127.0.0.1:18081/api/v1/certificates >"$TMP_DIR/list.
 grep -F '"id":"rsa-smoke"' "$TMP_DIR/list.json"
 grep -F '"id":"tlcp-smoke"' "$TMP_DIR/list.json"
 
+for id in rsa-smoke tlcp-smoke; do
+    curl --fail --silent --show-error -H 'Content-Type: application/json' -d '{}' \
+        "http://127.0.0.1:18081/api/v1/certificates/$id/revoke" >"$TMP_DIR/$id-revoke.json"
+    grep -F '"state":"revoked"' "$TMP_DIR/$id-revoke.json"
+done
+
+for kind in rsa sm2; do
+    curl --fail --silent --show-error \
+        "http://127.0.0.1:18081/api/v1/crl/$kind" >"$TMP_DIR/$kind.crl.pem"
+    "$OPENSSL_BIN" crl -in "$TMP_DIR/$kind.crl.pem" -noout -text -verify \
+        -CAfile "$TMP_DIR/data/pki/ca/$kind/root-ca.crt" >"$TMP_DIR/$kind-crl.txt" 2>&1
+    grep -F 'verify OK' "$TMP_DIR/$kind-crl.txt"
+    if ! grep -F 'Serial Number' "$TMP_DIR/$kind-crl.txt"; then
+        echo "$kind CRL contains no revoked serial" >&2
+        cat "$TMP_DIR/$kind-crl.txt" >&2
+        cat "$TMP_DIR/server.log" >&2
+        exit 1
+    fi
+done
+
 curl --fail --silent --dump-header "$TMP_DIR/key.headers" \
     http://127.0.0.1:18081/api/v1/certificates/rsa-smoke/files/server-rsa.key \
     --output "$TMP_DIR/server-rsa.key"

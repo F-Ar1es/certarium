@@ -5,8 +5,78 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+
+	"certarium/internal/pki"
 )
+
+type crlFakeRunner struct {
+	mu    sync.Mutex
+	calls int
+	args  [][]string
+}
+
+func (r *crlFakeRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.args = append(r.args, append([]string(nil), args...))
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-out" {
+			if err := os.WriteFile(args[i+1], []byte("CRL"), 0644); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []byte("OK"), nil
+}
+
+func TestTLCPRevocationIncludesBothCertificates(t *testing.T) {
+	root := t.TempDir()
+	store := pki.NewStore(root)
+	if err := store.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	caDir := filepath.Join(root, "pki", "ca", "sm2")
+	if err := os.MkdirAll(caDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"root-ca.crt": "CA", "root-ca.key": "KEY", "crlnumber": "1000\n"} {
+		if err := os.WriteFile(filepath.Join(caDir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle := filepath.Join(root, "pki", "issued", "gateway")
+	if err := os.MkdirAll(bundle, 0700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"gateway","kind":"tlcp","state":"valid","files":["server-sign.crt","server-sign.key","server-enc.crt","server-enc.key"]}`
+	if err := os.WriteFile(filepath.Join(bundle, manifestName), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"server-sign.crt", "server-enc.crt"} {
+		if err := os.WriteFile(filepath.Join(bundle, name), []byte("CERT"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &crlFakeRunner{}
+	service := NewPKIService(root, store, pki.NewEngine(store, runner))
+	if _, err := service.Revoke(context.Background(), "gateway"); err != nil {
+		t.Fatal(err)
+	}
+	revokes := 0
+	for _, args := range runner.args {
+		for _, arg := range args {
+			if arg == "-revoke" {
+				revokes++
+			}
+		}
+	}
+	if revokes != 2 {
+		t.Fatalf("TLCP revoke commands = %d, want 2: %v", revokes, runner.args)
+	}
+}
 
 func TestPKIServiceDownloadUsesManifestAllowlist(t *testing.T) {
 	root := t.TempDir()
@@ -90,5 +160,60 @@ func TestPKIServiceListIgnoresMalformedAndTemporaryEntries(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].ID != "good" {
 		t.Fatalf("records = %#v", records)
+	}
+}
+
+func TestConcurrentRepeatedRevocationIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	store := pki.NewStore(root)
+	if err := store.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	caDir := filepath.Join(root, "pki", "ca", "rsa")
+	if err := os.MkdirAll(caDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"root-ca.crt": "CA", "root-ca.key": "KEY", "crlnumber": "1000\n"} {
+		if err := os.WriteFile(filepath.Join(caDir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle := filepath.Join(root, "pki", "issued", "gateway")
+	if err := os.MkdirAll(bundle, 0700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"gateway","kind":"rsa","state":"valid","files":["server-rsa.crt","server-rsa.key"]}`
+	if err := os.WriteFile(filepath.Join(bundle, manifestName), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "server-rsa.crt"), []byte("CERT"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &crlFakeRunner{}
+	service := NewPKIService(root, store, pki.NewEngine(store, runner))
+
+	const workers = 12
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			record, err := service.Revoke(context.Background(), "gateway")
+			if err == nil && record.State != "revoked" {
+				err = errors.New("revocation did not return revoked state")
+			}
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runner.calls != 4 {
+		t.Fatalf("crypto calls = %d, want one four-command CRL publication", runner.calls)
 	}
 }

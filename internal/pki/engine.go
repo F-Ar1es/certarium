@@ -66,6 +66,13 @@ func (e *Engine) InitializeAuthorities(ctx context.Context, organization string)
 		if err := os.Mkdir(dir, 0700); err != nil {
 			return fmt.Errorf("create CA algorithm directory: %w", err)
 		}
+		for name, content := range map[string]string{
+			"index.txt": "", "index.txt.attr": "unique_subject = no\n", "crlnumber": "1000\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
+				return fmt.Errorf("initialize CA database: %w", err)
+			}
+		}
 	}
 	rsaKey, rsaCert := filepath.Join(rsaDir, "root-ca.key"), filepath.Join(rsaDir, "root-ca.crt")
 	sm2Key, sm2Cert := filepath.Join(sm2Dir, "root-ca.key"), filepath.Join(sm2Dir, "root-ca.crt")
@@ -93,6 +100,86 @@ func (e *Engine) InitializeAuthorities(ctx context.Context, organization string)
 		return fmt.Errorf("publish certificate authorities: %w", err)
 	}
 	return syncDirectory(pkiDir)
+}
+
+func (e *Engine) PublishCRL(ctx context.Context, kind string, validCerts, revokedCerts []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if kind != "rsa" && kind != "sm2" {
+		return errors.New("CRL kind must be rsa or sm2")
+	}
+	pkiDir := filepath.Join(e.store.root, "pki")
+	caDir := filepath.Join(pkiDir, "ca", kind)
+	temp, err := os.MkdirTemp(pkiDir, ".crl-"+kind+"-*")
+	if err != nil {
+		return fmt.Errorf("create temporary CRL directory: %w", err)
+	}
+	defer os.RemoveAll(temp)
+	if err := os.Chmod(temp, 0700); err != nil {
+		return fmt.Errorf("secure temporary CRL directory: %w", err)
+	}
+	if err := os.Mkdir(filepath.Join(temp, "newcerts"), 0700); err != nil {
+		return fmt.Errorf("create temporary certificate database: %w", err)
+	}
+	index := filepath.Join(temp, "index.txt")
+	attr := filepath.Join(temp, "index.txt.attr")
+	crlNumber := filepath.Join(temp, "crlnumber")
+	config := filepath.Join(temp, "ca.cnf")
+	if err := os.WriteFile(index, nil, 0600); err != nil {
+		return fmt.Errorf("initialize temporary CA index: %w", err)
+	}
+	if err := os.WriteFile(attr, []byte("unique_subject = no\n"), 0600); err != nil {
+		return fmt.Errorf("initialize temporary CA attributes: %w", err)
+	}
+	number, err := os.ReadFile(filepath.Join(caDir, "crlnumber"))
+	if errors.Is(err, os.ErrNotExist) {
+		number = []byte("1000\n")
+	} else if err != nil {
+		return fmt.Errorf("read CRL number: %w", err)
+	}
+	if err := os.WriteFile(crlNumber, number, 0600); err != nil {
+		return fmt.Errorf("initialize CRL number: %w", err)
+	}
+	if err := os.WriteFile(config, []byte(caDatabaseConfig(temp, caDir)), 0600); err != nil {
+		return fmt.Errorf("write CRL configuration: %w", err)
+	}
+	all := append(append([]string(nil), validCerts...), revokedCerts...)
+	for _, cert := range all {
+		if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-valid", cert); err != nil {
+			return fmt.Errorf("register certificate for CRL: %w", err)
+		}
+	}
+	for _, cert := range revokedCerts {
+		if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-revoke", cert, "-crl_reason", "unspecified"); err != nil {
+			return fmt.Errorf("revoke certificate: %w", err)
+		}
+	}
+	generated := filepath.Join(temp, kind+".crl.pem")
+	if _, err := e.runner.Run(ctx, "ca", "-batch", "-config", config, "-gencrl", "-out", generated); err != nil {
+		return fmt.Errorf("generate CRL: %w", err)
+	}
+	if _, err := e.runner.Run(ctx, "crl", "-in", generated, "-noout", "-verify", "-CAfile", filepath.Join(caDir, "root-ca.crt")); err != nil {
+		return fmt.Errorf("verify CRL: %w", err)
+	}
+	if err := os.Chmod(generated, 0644); err != nil {
+		return fmt.Errorf("set CRL permissions: %w", err)
+	}
+	crlDir := filepath.Join(pkiDir, "crl")
+	if err := os.MkdirAll(crlDir, 0700); err != nil {
+		return fmt.Errorf("create CRL directory: %w", err)
+	}
+	if err := replaceFile(generated, filepath.Join(crlDir, kind+".crl.pem")); err != nil {
+		return err
+	}
+	for _, pair := range [][2]string{{index, filepath.Join(caDir, "index.txt")}, {attr, filepath.Join(caDir, "index.txt.attr")}, {crlNumber, filepath.Join(caDir, "crlnumber")}} {
+		if err := replaceFile(pair[0], pair[1]); err != nil {
+			return err
+		}
+		if err := os.Chmod(pair[1], 0600); err != nil {
+			return fmt.Errorf("secure CA database file: %w", err)
+		}
+	}
+	return syncDirectory(crlDir)
 }
 
 func (e *Engine) IssueRSA(ctx context.Context, req Request) (Bundle, error) {
@@ -283,6 +370,39 @@ func syncDirectory(path string) error {
 
 func caSubject(organization, algorithm string) string {
 	return "/C=CN/O=" + organization + "/CN=" + organization + " " + algorithm + " Root CA"
+}
+
+func caDatabaseConfig(databaseDir, caDir string) string {
+	return fmt.Sprintf(`[ca]
+default_ca=certarium_ca
+
+[certarium_ca]
+database=%s/index.txt
+unique_subject=no
+new_certs_dir=%s/newcerts
+certificate=%s/root-ca.crt
+private_key=%s/root-ca.key
+crlnumber=%s/crlnumber
+default_md=default
+default_crl_days=7
+policy=policy_any
+
+[policy_any]
+commonName=supplied
+countryName=optional
+stateOrProvinceName=optional
+localityName=optional
+organizationName=optional
+organizationalUnitName=optional
+emailAddress=optional
+`, databaseDir, databaseDir, caDir, caDir, databaseDir)
+}
+
+func replaceFile(source, destination string) error {
+	if err := os.Rename(source, destination); err != nil {
+		return fmt.Errorf("publish %q: %w", filepath.Base(destination), err)
+	}
+	return nil
 }
 
 const rootCAConfig = `[req]

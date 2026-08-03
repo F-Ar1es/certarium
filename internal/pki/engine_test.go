@@ -242,6 +242,37 @@ func TestEveryReqCommandUsesExplicitConfig(t *testing.T) {
 	}
 }
 
+func TestPublishCRLUsesPrivateDatabaseAndDoesNotReplaceOnFailure(t *testing.T) {
+	for _, failAt := range []int{2, 3} {
+		t.Run(fmt.Sprintf("fail-command-%d", failAt), func(t *testing.T) {
+			store := initializedStore(t)
+			crlDir := filepath.Join(store.root, "pki", "crl")
+			if err := os.MkdirAll(crlDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			published := filepath.Join(crlDir, "rsa.crl.pem")
+			if err := os.WriteFile(published, []byte("OLD CRL"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cert := filepath.Join(t.TempDir(), "server.crt")
+			if err := os.WriteFile(cert, []byte("CERT"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			runner := &fakeRunner{failAt: failAt}
+			err := NewEngine(store, runner).PublishCRL(context.Background(), "rsa", nil, []string{cert})
+			if err == nil {
+				t.Fatal("CRL publication succeeded despite crypto failure")
+			}
+			if got := string(mustRead(t, published)); got != "OLD CRL" {
+				t.Fatalf("published CRL changed after failure: %q", got)
+			}
+			if len(runner.calls) < 2 || runner.calls[0][0] != "ca" || !containsArgument(runner.calls[0], "-valid") || !containsArgument(runner.calls[1], "-revoke") {
+				t.Fatalf("unexpected CRL command sequence: %v", runner.calls)
+			}
+		})
+	}
+}
+
 func containsArgument(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {

@@ -31,7 +31,7 @@ run_mutant() {
         echo "mutation anchor missing: $name" >&2
         exit 1
     fi
-    sed "s|$before|$after|" "$TMP_DIR/original" >"$CURRENT_FILE"
+    sed "s#$before#$after#" "$TMP_DIR/original" >"$CURRENT_FILE"
     if "$GO_BIN" test ./internal/pki -run "$test_name" >"$TMP_DIR/test.log" 2>&1; then
         echo "SURVIVED: $name" >&2
         cat "$TMP_DIR/test.log" >&2
@@ -78,5 +78,19 @@ run_mutant \
     'timed, cancel := context.WithTimeout(ctx, r.Timeout)' \
     'timed, cancel := context.WithCancel(ctx)' \
     TestCommandRunnerReturnsStableTimeoutError
+
+run_mutant \
+    crl-database-registration \
+    internal/pki/engine.go \
+    'validCerts...), revokedCerts...)' \
+    'validCerts...), validCerts...)' \
+    TestPublishCRLUsesPrivateDatabaseAndDoesNotReplaceOnFailure
+
+run_mutant \
+    stale-crl-on-generation-failure \
+    internal/pki/engine.go \
+    'return fmt.Errorf("generate CRL: %w", err)' \
+    'return nil' \
+    TestPublishCRLUsesPrivateDatabaseAndDoesNotReplaceOnFailure
 
 echo "All manual mutants were killed."

@@ -36,6 +36,7 @@ type IssueRequest struct {
 type CertificateRecord struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"`
+	State       string   `json:"state"`
 	CommonName  string   `json:"common_name,omitempty"`
 	DNSNames    []string `json:"dns_names,omitempty"`
 	IPAddresses []string `json:"ip_addresses,omitempty"`
@@ -55,6 +56,8 @@ type Service interface {
 	Issue(context.Context, string, IssueRequest) (CertificateRecord, error)
 	List(context.Context) ([]CertificateRecord, error)
 	Download(context.Context, string, string) (Download, error)
+	Revoke(context.Context, string) (CertificateRecord, error)
+	CRL(context.Context, string) (Download, error)
 }
 
 type Options struct {
@@ -78,6 +81,8 @@ func New(options Options) http.Handler {
 	h.mux.HandleFunc("GET /api/v1/certificates", h.list)
 	h.mux.HandleFunc("POST /api/v1/certificates/{kind}", h.issue)
 	h.mux.HandleFunc("GET /api/v1/certificates/{id}/files/{file}", h.download)
+	h.mux.HandleFunc("POST /api/v1/certificates/{id}/revoke", h.revoke)
+	h.mux.HandleFunc("GET /api/v1/crl/{kind}", h.crl)
 	return securityHeaders(h)
 }
 
@@ -177,6 +182,37 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	serveDownload(w, download)
+}
+
+func (h *handler) revoke(w http.ResponseWriter, r *http.Request) {
+	var empty struct{}
+	if err := decodeMutation(w, r, &empty); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求格式无效")
+		return
+	}
+	record, err := h.service.Revoke(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (h *handler) crl(w http.ResponseWriter, r *http.Request) {
+	download, err := h.service.CRL(r.Context(), r.PathValue("kind"))
+	if err != nil {
+		if errors.Is(err, ErrFileNotAllowed) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "资源不存在")
+			return
+		}
+		writeServiceError(w, err)
+		return
+	}
+	serveDownload(w, download)
+}
+
+func serveDownload(w http.ResponseWriter, download Download) {
 	if download.Private {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Pragma", "no-cache")
@@ -218,6 +254,8 @@ func sameOrigin(r *http.Request, origin string) bool {
 
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrFileNotAllowed):
+		writeAPIError(w, http.StatusNotFound, "not_found", "资源不存在")
 	case errors.Is(err, ErrInvalid):
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "请求参数无效")
 	case errors.Is(err, ErrConflict):

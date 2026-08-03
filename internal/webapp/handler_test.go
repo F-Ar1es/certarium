@@ -41,6 +41,14 @@ func (f *fakeService) Download(context.Context, string, string) (Download, error
 	return Download{}, ErrFileNotAllowed
 }
 
+func (f *fakeService) Revoke(_ context.Context, id string) (CertificateRecord, error) {
+	return CertificateRecord{ID: id, State: "revoked"}, nil
+}
+
+func (f *fakeService) CRL(context.Context, string) (Download, error) {
+	return Download{Name: "rsa.crl.pem", ContentType: "application/pkix-crl", Data: []byte("CRL")}, nil
+}
+
 func TestStatusDoesNotExposeDataDirectory(t *testing.T) {
 	h := New(Options{Service: &fakeService{initialized: true}, Version: "test"})
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
@@ -157,5 +165,23 @@ func TestLocalWebUIAndScriptAreServedSafely(t *testing.T) {
 		if strings.Contains(w.Body.String(), "innerHTML") || strings.Contains(w.Body.String(), "document.write") {
 			t.Fatalf("unsafe DOM rendering primitive in %s", tc.path)
 		}
+	}
+}
+
+func TestRevokeAndCRLRoutes(t *testing.T) {
+	h := New(Options{Service: &fakeService{}})
+	revoke := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/gateway/revoke", bytes.NewBufferString(`{}`))
+	revoke.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, revoke)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"state":"revoked"`) {
+		t.Fatalf("revoke response: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/crl/rsa", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, request)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/pkix-crl" || w.Body.String() != "CRL" {
+		t.Fatalf("CRL response: status=%d type=%q body=%q", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
 }
