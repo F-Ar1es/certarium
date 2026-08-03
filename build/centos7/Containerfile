@@ -1,0 +1,78 @@
+FROM quay.io/centos/centos:7
+
+ARG NGINX_COMMIT
+ARG TONGSUO_COMMIT
+ARG PCRE2_VERSION
+
+RUN printf '%s\n' \
+      '[base]' \
+      'name=CentOS-7 - Base' \
+      'baseurl=https://vault.centos.org/7.9.2009/os/$basearch/' \
+      'enabled=1' \
+      'gpgcheck=0' \
+      '[updates]' \
+      'name=CentOS-7 - Updates' \
+      'baseurl=https://vault.centos.org/7.9.2009/updates/$basearch/' \
+      'enabled=1' \
+      'gpgcheck=0' \
+      '[extras]' \
+      'name=CentOS-7 - Extras' \
+      'baseurl=https://vault.centos.org/7.9.2009/extras/$basearch/' \
+      'enabled=1' \
+      'gpgcheck=0' \
+      > /etc/yum.repos.d/CentOS-Base.repo \
+    && printf '%s\n' 'retries=10' 'timeout=60' >> /etc/yum.conf \
+    && for attempt in 1 2 3; do \
+      yum -y install \
+        ca-certificates \
+        gcc \
+        git \
+        make \
+        perl \
+        perl-Data-Dumper \
+        perl-IPC-Cmd \
+        tar \
+        which \
+      && break; \
+      test "$attempt" -lt 3 || exit 1; \
+      yum clean metadata; \
+    done \
+    && yum clean all \
+    && rm -rf /var/cache/yum
+
+WORKDIR /work
+
+RUN for attempt in 1 2 3; do \
+      rm -rf nginx; \
+      git clone https://github.com/nginx/nginx.git nginx && break; \
+      test "$attempt" -lt 3 || exit 1; \
+    done \
+    && (cd nginx \
+      && git checkout --detach "${NGINX_COMMIT}" \
+      && test "$(git rev-parse HEAD)" = "${NGINX_COMMIT}")
+
+RUN for attempt in 1 2 3; do \
+      rm -rf tongsuo; \
+      git clone https://github.com/Tongsuo-Project/Tongsuo.git tongsuo && break; \
+      test "$attempt" -lt 3 || exit 1; \
+    done \
+    && (cd tongsuo \
+      && git checkout --detach "${TONGSUO_COMMIT}" \
+      && test "$(git rev-parse HEAD)" = "${TONGSUO_COMMIT}")
+
+RUN for attempt in 1 2 3; do \
+      rm -rf pcre2; \
+      git clone --branch "pcre2-${PCRE2_VERSION}" --depth 1 \
+        https://github.com/PCRE2Project/pcre2.git pcre2 && break; \
+      test "$attempt" -lt 3 || exit 1; \
+    done \
+    && (cd pcre2 \
+      && test "$(git describe --tags --exact-match)" = "pcre2-${PCRE2_VERSION}")
+
+COPY nginx-gm-poc/patches/nginx-1.30.4-tongsuo-ntls.patch /work/ntls.patch
+COPY nginx-gm-poc/modules/ngx_tongsuo_ntls /work/ngx_tongsuo_ntls
+COPY tlslab/build/centos7/build-core.sh /usr/local/bin/build-core
+
+RUN chmod 0755 /usr/local/bin/build-core
+
+CMD ["/usr/local/bin/build-core"]

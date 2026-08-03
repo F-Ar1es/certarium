@@ -1,0 +1,16 @@
+/.build/
+/dist/*
+!/dist/.gitkeep
+.DS_Store
+*.log
+data/
+*.crt
+*.csr
+*.pem
+*.key
+*.p12
+*.pfx
+*.srl
+index.txt*
+serial*
+crlnumber*
